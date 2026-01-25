@@ -1,11 +1,26 @@
 // src/App.jsx
 import React, { useState, useRef, useEffect } from 'react';
-import { Upload, RotateCcw, Move, Eye, Loader2, ZoomIn, RotateCw, Sparkles, Search, MapPin, DollarSign, X } from 'lucide-react';
+import { Upload, RotateCcw, Move, Eye, Loader2, ZoomIn, RotateCw, Sparkles, Search, MapPin, DollarSign, X, Lightbulb, Terminal, ChevronRight } from 'lucide-react';
 import * as THREE from 'three';
+
+const SYSTEM_LOGS = [
+  "Initializing neural network...",
+  "Parsing image geometry...",
+  "Detecting light sources...",
+  "Calibrating scale reference...",
+  "Identifying furniture entities...",
+  "Generating voxel map...",
+  "Triangulating mesh surfaces...",
+  "Applying texture mapping...",
+  "Optimizing shadow rendering...",
+  "Finalizing 3D scene composition...",
+  "Rendering finished."
+];
 
 export default function RoomRedesigner() {
   const [image, setImage] = useState(null);
   const [loading, setLoading] = useState(false);
+  const [logs, setLogs] = useState([]);
   const [items, setItems] = useState([]);
   const [view, setView] = useState('upload');
   const [apiKey, setApiKey] = useState('');
@@ -20,6 +35,7 @@ export default function RoomRedesigner() {
   const [userLocation, setUserLocation] = useState('');
   const [furnitureLoading, setFurnitureLoading] = useState(false);
   const [furnitureResults, setFurnitureResults] = useState([]);
+  const [selectedIdx, setSelectedIdx] = useState(null);
   
   const canvasRef = useRef(null);
   const sceneRef = useRef(null);
@@ -35,6 +51,29 @@ export default function RoomRedesigner() {
   const dragPlaneRef = useRef(null);
   const lastMouseRef = useRef({ x: 0, y: 0 });
 
+  useEffect(() => {
+    let interval;
+    if (loading) {
+      setLogs([]);
+      let step = 0;
+      interval = setInterval(() => {
+        if (step < SYSTEM_LOGS.length) {
+          setLogs(prev => [...prev, SYSTEM_LOGS[step]]);
+          step++;
+        }
+      }, 800);
+    }
+    return () => clearInterval(interval);
+  }, [loading]);
+
+  const getContrastColor = (hex) => {
+    const r = parseInt(hex.substr(0, 2), 16);
+    const g = parseInt(hex.substr(2, 2), 16);
+    const b = parseInt(hex.substr(4, 2), 16);
+    const yiq = ((r * 299) + (g * 587) + (b * 114)) / 1000;
+    return (yiq >= 128) ? '#000000' : '#FFFFFF';
+  };
+
   const handleImageUpload = (e) => {
     const file = e.target.files[0];
     if (file) {
@@ -43,6 +82,28 @@ export default function RoomRedesigner() {
         setImage(event.target.result);
       };
       reader.readAsDataURL(file);
+    }
+  };
+
+  const highlightObject = (object, highlight) => {
+    if (!object) return;
+    object.traverse(child => {
+      if (child.material && child.material.emissive) {
+        child.material.emissive = highlight ? new THREE.Color(0x555555) : new THREE.Color(0x000000);
+      }
+    });
+  };
+
+  const handleStaticLabelClick = (index) => {
+    const object = objectsRef.current[index];
+    if (object) {
+      if (selectedRef.current && selectedRef.current !== object) {
+        highlightObject(selectedRef.current, false);
+      }
+      
+      selectedRef.current = object;
+      highlightObject(object, true);
+      setSelectedIdx(index);
     }
   };
 
@@ -125,16 +186,35 @@ export default function RoomRedesigner() {
   const createLabel = (text, color) => {
     const canvas = document.createElement('canvas');
     const ctx = canvas.getContext('2d');
-    canvas.width = 256;
-    canvas.height = 64;
+    
+    const fontSize = 32;
+    const font = `bold ${fontSize}px Arial`;
+    ctx.font = font;
+    
+    const textMetrics = ctx.measureText(text);
+    const textWidth = textMetrics.width;
+    
+    const padding = 40;
+    const canvasWidth = Math.max(256, textWidth + padding);
+    const canvasHeight = 64;
+    
+    canvas.width = canvasWidth;
+    canvas.height = canvasHeight;
+    
+    ctx.font = font;
+    ctx.textBaseline = 'middle';
+    ctx.textAlign = 'center';
     
     ctx.fillStyle = `#${color.toString(16).padStart(6, '0')}`;
+    ctx.strokeStyle = '#FFFFFF';
+    ctx.lineWidth = 6;
+    
     ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.strokeRect(0, 0, canvas.width, canvas.height);
     
     ctx.fillStyle = 'white';
-    ctx.font = 'bold 32px Arial';
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
+    ctx.shadowColor = 'black';
+    ctx.shadowBlur = 4;
     ctx.fillText(text, canvas.width / 2, canvas.height / 2);
     
     const texture = new THREE.Texture(canvas);
@@ -142,7 +222,11 @@ export default function RoomRedesigner() {
     
     const material = new THREE.SpriteMaterial({ map: texture });
     const sprite = new THREE.Sprite(material);
-    sprite.scale.set(2, 0.5, 1);
+    const aspectRatio = canvasWidth / canvasHeight;
+    const spriteHeight = 0.5;
+    const spriteWidth = spriteHeight *aspectRatio;
+    
+    sprite.scale.set(spriteWidth, spriteHeight, 1);
     return sprite;
   };
 
@@ -210,7 +294,7 @@ Be creative and detailed in representing each object's actual shape and features
             temperature: 0.4,
             topK: 32,
             topP: 1,
-            maxOutputTokens: 4096
+            maxOutputTokens: 8192
           }
         })
       });
@@ -270,7 +354,7 @@ Return the complete array with all objects in the same format, just with updated
             temperature: 0.7,
             topK: 40,
             topP: 0.95,
-            maxOutputTokens: 4096
+            maxOutputTokens: 8192
           }
         })
       });
@@ -340,7 +424,7 @@ Return ONLY a JSON array in this exact format:
             temperature: 0.7,
             topK: 40,
             topP: 0.95,
-            maxOutputTokens: 2048
+            maxOutputTokens: 8192
           }
         })
       });
@@ -417,11 +501,12 @@ Return ONLY a JSON array in this exact format:
       const baseColor = parseInt(item.color || 'AAAAAA', 16);
       const furniture = createObjectFromComponents(item.components || [], baseColor);
       furniture.position.set(item.x - 5, 0, item.z - 5);
-      furniture.userData = { name: item.name, id: idx, originalColor: baseColor };
+      furniture.userData = { name: item.name, id: idx, originalColor: baseColor, isFurniture: true };
       
       const label = createLabel(item.name, baseColor);
       label.position.set(item.x - 5, 2, item.z - 5);
-      label.visible = false;
+      label.visible = false; 
+      label.userData = { id: idx, isLabel: true };
       labelsRef.current.push(label);
       scene.add(label);
       
@@ -441,21 +526,39 @@ Return ONLY a JSON array in this exact format:
       mouseRef.current.y = -((e.clientY - rect.top) / rect.height) * 2 + 1;
 
       raycasterRef.current.setFromCamera(mouseRef.current, camera);
-      const intersects = raycasterRef.current.intersectObjects(objectsRef.current, true);
+      
+      const allInteractables = [...objectsRef.current, ...labelsRef.current];
+      const intersects = raycasterRef.current.intersectObjects(allInteractables, true);
 
       if (intersects.length > 0) {
-        let obj = intersects[0].object;
-        while (obj.parent && !obj.userData.name) {
-          obj = obj.parent;
+        let hitObj = intersects[0].object;
+        while (hitObj.parent && !hitObj.userData.name && !hitObj.userData.isLabel) {
+          hitObj = hitObj.parent;
         }
-        selectedRef.current = obj;
-        isDraggingRef.current = true;
-        
-        obj.traverse(child => {
-          if (child.material && child.material.emissive) {
-            child.material.emissive = new THREE.Color(0x555555);
+
+        let targetFurniture = null;
+        if (hitObj.userData.isLabel) {
+          targetFurniture = objectsRef.current.find(obj => obj.userData.id === hitObj.userData.id);
+        } else {
+          targetFurniture = hitObj;
+        }
+
+        if (targetFurniture) {
+          if (selectedRef.current && selectedRef.current !== targetFurniture) {
+             highlightObject(selectedRef.current, false);
           }
-        });
+          
+          selectedRef.current = targetFurniture;
+          isDraggingRef.current = true;
+          highlightObject(targetFurniture, true);
+          setSelectedIdx(targetFurniture.userData.id);
+        }
+      } else {
+        if (selectedRef.current) {
+          highlightObject(selectedRef.current, false);
+          selectedRef.current = null;
+          setSelectedIdx(null);
+        }
       }
     };
 
@@ -525,16 +628,8 @@ Return ONLY a JSON array in this exact format:
     };
 
     const handleMouseUp = () => {
-      if (selectedRef.current) {
-        selectedRef.current.traverse(child => {
-          if (child.material && child.material.emissive) {
-            child.material.emissive = new THREE.Color(0x000000);
-          }
-        });
-        selectedRef.current = null;
-      }
-      isDraggingRef.current = false;
-      isRotatingRef.current = false;
+        isDraggingRef.current = false;
+        isRotatingRef.current = false;
     };
 
     const handleWheel = (e) => {
@@ -711,44 +806,38 @@ Return ONLY a JSON array in this exact format:
               <span className="font-semibold">Interactive 3D Room</span>
             </div>
             <div className="flex items-center justify-center gap-6 text-sm text-blue-100">
-              <div className="flex items-center gap-1">
-                <Move size={16} />
-                <span>Left-click & drag to move furniture</span>
-              </div>
-              <div className="flex items-center gap-1">
-                <RotateCw size={16} />
-                <span>Right-click & drag to rotate view</span>
-              </div>
-              <div className="flex items-center gap-1">
-                <ZoomIn size={16} />
-                <span>Scroll to zoom</span>
-              </div>
+              <div className="flex items-center gap-1"><Move size={16} /><span>Left-click & drag to move</span></div>
+              <div className="flex items-center gap-1"><RotateCw size={16} /><span>Right-click & drag to rotate</span></div>
+              <div className="flex items-center gap-1"><ZoomIn size={16} /><span>Scroll to zoom</span></div>
             </div>
-            {hoveredItem && (
-              <p className="text-center mt-2 text-blue-100 font-medium">
-                Hovering: {hoveredItem}
-              </p>
-            )}
+            
+            <p className="text-center mt-2 text-blue-100 font-medium h-6 transition-all duration-200">
+              {selectedIdx !== null 
+                ? `Selected: ${items[selectedIdx].name}` 
+                : (hoveredItem ? `Hovering: ${hoveredItem}` : 'Select an object to edit')}
+            </p>
           </div>
           
           <div className="flex-1 relative">
-            <canvas
-              ref={canvasRef}
-              className="w-full h-full cursor-grab active:cursor-grabbing"
-            />
+            <canvas ref={canvasRef} className="w-full h-full cursor-grab active:cursor-grabbing" />
           </div>
-
           <div className="bg-white p-4 border-t">
             <div className="flex flex-wrap gap-2 justify-center">
               {items.map((item, idx) => {
-                const color = parseInt(item.color || 'AAAAAA', 16);
+                const colorHex = item.color || 'AAAAAA';
+                const textColor = getContrastColor(colorHex);
+                const isSelected = selectedIdx === idx;
+                
                 return (
-                  <div
+                  <div 
                     key={idx}
-                    className="px-4 py-2 rounded-full text-sm font-medium"
-                    style={{
-                      backgroundColor: `#${color.toString(16).padStart(6, '0')}22`,
-                      color: `#${color.toString(16).padStart(6, '0')}`
+                    onClick={() => handleStaticLabelClick(idx)}
+                    className={`px-4 py-2 rounded-full text-sm font-bold cursor-pointer transition-all duration-200 border-2 ${isSelected ? 'ring-2 ring-blue-500 scale-105 shadow-md' : 'border-transparent hover:scale-105'}`}
+                    style={{ 
+                      backgroundColor: `#${colorHex}`, 
+                      color: textColor,
+                      borderColor: isSelected ? '#3b82f6' : 'transparent',
+                      boxShadow: '0 2px 4px rgba(0,0,0,0.1)'
                     }}
                   >
                     {item.name}
@@ -760,7 +849,6 @@ Return ONLY a JSON array in this exact format:
         </div>
       )}
 
-      {/* AI Layout Modal */}
       {showLayoutModal && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
           <div className="bg-white rounded-2xl shadow-2xl max-w-2xl w-full p-8">
