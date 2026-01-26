@@ -255,7 +255,7 @@ export default function RoomRedesigner() {
                 }
               },
               {
-                text: `Analyze this room image and identify all furniture and objects. For each object, provide detailed 3D representation data.
+                text: `Analyze this room image and identify all walls, furniture and objects. For each object, provide detailed 3D representation data.
 
 Return ONLY a JSON array with no preamble or markdown. Each item must have:
 - name: descriptive name of the object
