@@ -18,7 +18,7 @@ const SYSTEM_LOGS = [
 ];
 
 export default function RoomRedesigner() {
-  const [image, setImage] = useState(null);
+  const [images, setImages] = useState([]);
   const [loading, setLoading] = useState(false);
   const [logs, setLogs] = useState([]);
   const [items, setItems] = useState([]);
@@ -75,14 +75,24 @@ export default function RoomRedesigner() {
   };
 
   const handleImageUpload = (e) => {
-    const file = e.target.files[0];
-    if (file) {
-      const reader = new FileReader();
-      reader.onload = (event) => {
-        setImage(event.target.result);
-      };
-      reader.readAsDataURL(file);
+    const files = Array.from(e.target.files);
+    const remainingSlots = 5 - images.length;
+    const filesToProcess = files.slice(0, remainingSlots);
+
+    if (filesToProcess.length === 0) {
+      if (images.length >= 5) alert("Maximum 5 images allowed");
+      return;
     }
+
+    Promise.all(filesToProcess.map(file => {
+      return new Promise((resolve) => {
+        const reader = new FileReader();
+        reader.onload = (event) => resolve(event.target.result);
+        reader.readAsDataURL(file);
+      });
+    })).then(newImages => {
+      setImages(prev => [...prev, ...newImages]);
+    });
   };
 
   const highlightObject = (object, highlight) => {
@@ -231,31 +241,28 @@ export default function RoomRedesigner() {
   };
 
   const analyzeRoom = async () => {
-    if (!image || !apiKey) {
-      alert('Please enter your Gemini API key');
+    if (images.length === 0 || !apiKey) {
+      alert('Please upload images and enter your Gemini API key');
       return;
     }
     
     setLoading(true);
     try {
-      const base64Data = image.split(',')[1];
+      const imageParts = images.map(img => ({
+        inline_data: {
+          mime_type: img.substring(img.indexOf(':') + 1, img.indexOf(';')),
+          data: img.split(',')[1]
+        }
+      }));
       
       const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-3-pro-preview:generateContent?key=${apiKey}`, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           contents: [{
             parts: [
-              {
-                inline_data: {
-                  mime_type: 'image/jpeg',
-                  data: base64Data
-                }
-              },
-              {
-                text: `Analyze this room image and identify all walls, furniture and objects. For each object, provide detailed 3D representation data.
+              ...imageParts,
+              { text: `Analyze these room images (different angles of the same room) and identify all furniture and objects. For each object, provide detailed 3D representation data.
 
 Return ONLY a JSON array with no preamble or markdown. Each item must have:
 - name: descriptive name of the object
@@ -309,12 +316,32 @@ Be creative and detailed in representing each object's actual shape and features
         throw new Error(errorMsg);
       }
       
-      const text = data.candidates[0].content.parts[0].text.trim();
-      const cleanText = text.replace(/```json|```/g, '').trim();
-      const detectedItems = JSON.parse(cleanText);
+      // Get text response
+      const text = data.candidates[0].content.parts[0].text;
       
-      setItems(detectedItems);
-      setView('ar');
+      // 1. Find the outer JSON array brackets
+      const start = text.indexOf('[');
+      const end = text.lastIndexOf(']');
+      
+      if (start === -1 || end === -1) {
+        throw new Error("No JSON array found in response");
+      }
+
+      // 2. Extract strictly the JSON part
+      let cleanText = text.substring(start, end + 1);
+
+      // 3. Remove trailing commas (e.g., "[A, B, ]" -> "[A, B]")
+      // This regex finds a comma followed by whitespace and a closing bracket/brace
+      cleanText = cleanText.replace(/,\s*([\]}])/g, '$1');
+
+      try {
+        const detectedItems = JSON.parse(cleanText);
+        setItems(detectedItems);
+        setView('ar');
+      } catch (parseError) {
+        console.error("JSON Parse Error. Raw text:", cleanText);
+        throw new Error(`Failed to parse 3D data: ${parseError.message}`);
+      }
     } catch (err) {
       console.error('Analysis error:', err);
       alert(`Failed to analyze room: ${err.message}`);
@@ -672,11 +699,7 @@ Return ONLY a JSON array in this exact format:
     };
   }, [view, items]);
 
-  const resetView = () => {
-    setImage(null);
-    setItems([]);
-    setView('upload');
-  };
+  const resetView = () => { setView('upload'); setImages([]); setItems([]); };
 
   return (
     <div className="w-full h-screen bg-gradient-to-br from-blue-50 to-indigo-100 flex flex-col">
@@ -754,26 +777,28 @@ Return ONLY a JSON array in this exact format:
               <label className="block">
                 <div className="border-3 border-dashed border-blue-300 rounded-xl p-12 text-center cursor-pointer hover:border-blue-500 hover:bg-blue-50 transition">
                   <Upload className="mx-auto mb-4 text-blue-500" size={48} />
-                  <p className="text-lg font-semibold text-gray-700 mb-2">
-                    Click to upload room image
-                  </p>
+                  <p className="text-lg font-semibold text-gray-700 mb-2">Click to upload up to 5 room images</p>
                   <p className="text-sm text-gray-500">PNG, JPG up to 10MB</p>
-                  <input
-                    type="file"
-                    accept="image/*"
-                    onChange={handleImageUpload}
-                    className="hidden"
-                  />
+                  <input type="file" accept="image/*" multiple onChange={handleImageUpload} className="hidden" />
                 </div>
               </label>
 
-              {image && (
+              {images.length > 0 && (
                 <div className="space-y-4">
-                  <img
-                    src={image}
-                    alt="Room preview"
-                    className="w-full rounded-lg shadow-lg"
-                  />
+                  <div className="relative overflow-hidden rounded-lg shadow-lg bg-gray-50 border border-gray-200">
+                    <div className="grid grid-cols-2 md:grid-cols-3 gap-2 p-2">
+                      {images.map((img, idx) => (
+                        <div key={idx} className="relative group aspect-square">
+                          <img 
+                            src={img} 
+                            alt={`Room view ${idx + 1}`} 
+                            className="w-full h-full object-cover rounded-lg" 
+                          />
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+
                   <button
                     onClick={analyzeRoom}
                     disabled={loading || !apiKey}
@@ -782,7 +807,7 @@ Return ONLY a JSON array in this exact format:
                     {loading ? (
                       <>
                         <Loader2 className="animate-spin" size={24} />
-                        Analyzing Room...
+                        Processing {images.length} View{images.length > 1 ? 's' : ''}...
                       </>
                     ) : (
                       <>
@@ -790,6 +815,11 @@ Return ONLY a JSON array in this exact format:
                         Analyze & Create 3D Room
                       </>
                     )}
+                  </button>
+                  
+                  {/* Clear Button */}
+                  <button onClick={() => setImages([])} disabled={loading} className="w-full py-2 text-gray-500 hover:text-red-500 text-sm font-medium transition">
+                    Clear Images
                   </button>
                 </div>
               )}
