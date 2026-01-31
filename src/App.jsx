@@ -316,12 +316,32 @@ Be creative and detailed in representing each object's actual shape and features
         throw new Error(errorMsg);
       }
       
-      const text = data.candidates[0].content.parts[0].text.trim();
-      const cleanText = text.replace(/```json|```/g, '').trim();
-      const detectedItems = JSON.parse(cleanText);
+      // Get text response
+      const text = data.candidates[0].content.parts[0].text;
       
-      setItems(detectedItems);
-      setView('ar');
+      // 1. Find the outer JSON array brackets
+      const start = text.indexOf('[');
+      const end = text.lastIndexOf(']');
+      
+      if (start === -1 || end === -1) {
+        throw new Error("No JSON array found in response");
+      }
+
+      // 2. Extract strictly the JSON part
+      let cleanText = text.substring(start, end + 1);
+
+      // 3. Remove trailing commas (e.g., "[A, B, ]" -> "[A, B]")
+      // This regex finds a comma followed by whitespace and a closing bracket/brace
+      cleanText = cleanText.replace(/,\s*([\]}])/g, '$1');
+
+      try {
+        const detectedItems = JSON.parse(cleanText);
+        setItems(detectedItems);
+        setView('ar');
+      } catch (parseError) {
+        console.error("JSON Parse Error. Raw text:", cleanText);
+        throw new Error(`Failed to parse 3D data: ${parseError.message}`);
+      }
     } catch (err) {
       console.error('Analysis error:', err);
       alert(`Failed to analyze room: ${err.message}`);
