@@ -391,24 +391,52 @@ Be creative and detailed in representing each object's actual shape and features
           contents: [{
             parts: [{
               text: `Given this current room layout: ${JSON.stringify(items)}
-The room is a 10x10 grid where x and z coordinates range from 0-10.
-User's request: ${layoutPrompt}
-Provide an optimized layout that meets the user's requirements. Return ONLY a JSON array with the new arrangement. Keep ALL the same objects with their components and colors, just reposition them (change x and z coordinates).`
+
+  The room is a 10x10 grid where x and z coordinates range from 0-10.
+
+  User's request: ${layoutPrompt}
+
+  Provide an optimized layout that meets the user's requirements. Return ONLY a JSON array with the new arrangement. Keep ALL the same objects with their components and colors, just reposition them (change x and z coordinates).
+
+  Return the complete array with all objects in the same format, just with updated x and z positions.`
             }]
           }],
-          generationConfig: { temperature: 0.7 }
+          generationConfig: {
+            temperature: 0.7,
+            topK: 40,
+            topP: 0.95,
+            maxOutputTokens: 4096
+          }
         })
       });
 
       const data = await response.json();
+      
+      if (data.error) {
+        throw new Error(data.error.message || 'API Error');
+      }
+      
       const text = data.candidates[0].content.parts[0].text.trim();
-      const cleanText = text.replace(/```json|```/g, '').trim();
+      console.log('Raw layout response:', text);
+
+      let cleanText = text
+        .replace(/```json\s*/g, '')
+        .replace(/```\s*/g, '')
+        .trim();
+
+      const jsonMatch = cleanText.match(/\[[\s\S]*\]/);
+      if (jsonMatch) {
+        cleanText = jsonMatch[0];
+      }
+
       const newLayout = JSON.parse(cleanText);
+      
       setItems(newLayout);
       setShowLayoutModal(false);
       setLayoutPrompt('');
       alert('Layout optimized! Check out the new arrangement.');
     } catch (err) {
+      console.error('Layout optimization error:', err);
       alert(`Failed to optimize layout: ${err.message}`);
     } finally {
       setLayoutLoading(false);
@@ -423,8 +451,13 @@ Provide an optimized layout that meets the user's requirements. Return ONLY a JS
 
     setFurnitureLoading(true);
     try {
-      const locationText = userLocation.trim() ? `near ${userLocation}` : 'available online';
-      const priceText = priceRange.trim() ? `in the ${priceRange} price range` : 'at various price points';
+      const locationText = userLocation.trim() 
+        ? `near ${userLocation}` 
+        : 'available online';
+      
+      const priceText = priceRange.trim()
+        ? `in the ${priceRange} price range`
+        : 'at various price points';
 
       const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-3-pro-preview:generateContent?key=${apiKey}`, {
         method: 'POST',
@@ -432,19 +465,57 @@ Provide an optimized layout that meets the user's requirements. Return ONLY a JS
         body: JSON.stringify({
           contents: [{
             parts: [{
-              text: `Find and recommend ${furnitureType} ${locationText} ${priceText}. Provide 5 specific furniture recommendations. Return ONLY a JSON array in this exact format: [{"name":"Product Name","price":"$XXX","store":"Store Name","features":"Key features description"}]`
+              text: `Find and recommend ${furnitureType} ${locationText} ${priceText}. 
+
+  Provide 5 specific furniture recommendations with:
+  1. Product name/description
+  2. Estimated price
+  3. Where to buy (store/website)
+  4. Key features
+
+  Return ONLY a JSON array in this exact format:
+  [{"name":"Product Name","price":"$XXX","store":"Store Name","features":"Key features description"}]`
             }]
           }],
-          tools: [{ google_search: {} }]
+          tools: [{ google_search: {} }],
+          generationConfig: {
+            temperature: 0.7,
+            topK: 40,
+            topP: 0.95,
+            maxOutputTokens: 2048
+          }
         })
       });
 
       const data = await response.json();
-      const text = data.candidates[0].content.parts.filter(part => part.text).map(part => part.text).join('\n').trim();
-      const cleanText = text.replace(/```json|```/g, '').trim();
+      
+      if (data.error) {
+        throw new Error(data.error.message || 'API Error');
+      }
+      
+      const text = data.candidates[0].content.parts
+        .filter(part => part.text)
+        .map(part => part.text)
+        .join('\n')
+        .trim();
+
+      console.log('Raw furniture response:', text);
+
+      let cleanText = text
+        .replace(/```json\s*/g, '')
+        .replace(/```\s*/g, '')
+        .trim();
+
+      const jsonMatch = cleanText.match(/\[[\s\S]*\]/);
+      if (jsonMatch) {
+        cleanText = jsonMatch[0];
+      }
+
       const recommendations = JSON.parse(cleanText);
+      
       setFurnitureResults(recommendations);
     } catch (err) {
+      console.error('Furniture search error:', err);
       alert(`Failed to find furniture: ${err.message}`);
     } finally {
       setFurnitureLoading(false);
