@@ -1,8 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { 
   Upload, RotateCcw, Move, Eye, Loader2, ZoomIn, RotateCw, 
-  Sparkles, Search, MapPin, DollarSign, X, Terminal, 
-  ChevronRight, Moon, Sun, Wand2, Armchair, Box, User
+  Sparkles, Search, MapPin, DollarSign, X, Terminal, Moon, Sun, Wand2, Armchair, Box, User
 } from 'lucide-react';
 import * as THREE from 'three';
 
