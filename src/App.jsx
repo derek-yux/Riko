@@ -267,38 +267,50 @@ export default function RoomRedesigner() {
           contents: [{
             parts: [
               ...imageParts,
-              { text: `Analyze these room images (different angles of the same room) and identify all furniture and objects. For each object, provide detailed 3D representation data.
+              { text: `Analyze these room images (different angles of the same room) and identify all room elements including:
+                1. Architectural features: walls, doors, windows, floor boundaries
+                2. Furniture: beds, sofas, tables, chairs, desks, cabinets, shelves
+                3. Decorative items: lamps, plants, artwork, decorations
+                
+                For each object, provide detailed 3D representation data.
 
-Return ONLY a JSON array with no preamble or markdown. Each item must have:
-- name: descriptive name of the object
-- x: horizontal position (0-10)
-- z: depth position (0-10)
-- color: hex color code (e.g., "8B4513" for brown)
-- components: array of geometric shapes that make up the object, where each component has:
-  - geometry: { type: "box"|"cylinder"|"sphere"|"cone", params: {dimensions} }
-  - position: { x, y, z } relative to object center
-  - rotation: { x, y, z } in radians (optional)
-  - color: hex color (optional, overrides base color)
-  - emissive: hex color for glowing parts (optional)
-  - emissiveIntensity: 0-1 (optional)
+                Return ONLY a JSON array with no preamble or markdown. Each item must have:
+                - name: descriptive name of the object (e.g., "north wall", "wooden chair", "ceiling lamp")
+                - x: horizontal position (0-10)
+                - z: depth position (0-10)
+                - color: hex color code (e.g., "8B4513" for brown, "F5F5DC" for beige walls)
+                - components: array of geometric shapes that make up the object, where each component has:
+                  - geometry: { type: "box"|"cylinder"|"sphere"|"cone"|"plane", params: {dimensions} }
+                  - position: { x, y, z } relative to object center
+                  - rotation: { x, y, z } in radians (optional)
+                  - color: hex color (optional, overrides base color)
+                  - emissive: hex color for glowing parts (optional)
+                  - emissiveIntensity: 0-1 (optional)
 
-Example for a simple chair:
-{
-  "name": "wooden chair",
-  "x": 3,
-  "z": 4,
-  "color": "8B4513",
-  "components": [
-    {"geometry": {"type": "box", "params": {"width": 0.8, "height": 0.1, "depth": 0.8}}, "position": {"x": 0, "y": 0.5, "z": 0}},
-    {"geometry": {"type": "cylinder", "params": {"radiusTop": 0.05, "radiusBottom": 0.05, "height": 0.5}}, "position": {"x": -0.3, "y": 0.25, "z": -0.3}},
-    {"geometry": {"type": "cylinder", "params": {"radiusTop": 0.05, "radiusBottom": 0.05, "height": 0.5}}, "position": {"x": 0.3, "y": 0.25, "z": -0.3}},
-    {"geometry": {"type": "cylinder", "params": {"radiusTop": 0.05, "radiusBottom": 0.05, "height": 0.5}}, "position": {"x": -0.3, "y": 0.25, "z": 0.3}},
-    {"geometry": {"type": "cylinder", "params": {"radiusTop": 0.05, "radiusBottom": 0.05, "height": 0.5}}, "position": {"x": 0.3, "y": 0.25, "z": 0.3}},
-    {"geometry": {"type": "box", "params": {"width": 0.8, "height": 0.6, "depth": 0.1}}, "position": {"x": 0, "y": 0.8, "z": -0.35}}
-  ]
-}
-
-Be creative and detailed in representing each object's actual shape and features.`
+                Example for a wall:
+                {"name": "north wall",
+                "x": 5,
+                "z": 0,
+                "color": "F5F5DC",
+                "components": [
+                {"geometry": {"type": "box", "params": {"width": 10, "height": 3, "depth": 0.2}}, "position": {"x": 0, "y": 1.5, "z": 0}}
+                ]}
+                
+                Example for a chair:
+                {"name": "wooden chair",
+                "x": 3,
+                "z": 4,
+                "color": "8B4513",
+                "components": [
+                {"geometry": {"type": "box", "params": {"width": 0.8, "height": 0.1, "depth": 0.8}}, "position": {"x": 0, "y": 0.5, "z": 0}},
+                {"geometry": {"type": "cylinder", "params": {"radiusTop": 0.05, "radiusBottom": 0.05, "height": 0.5}}, "position": {"x": -0.3, "y": 0.25, "z": -0.3}},
+                {"geometry": {"type": "cylinder", "params": {"radiusTop": 0.05, "radiusBottom": 0.05, "height": 0.5}}, "position": {"x": 0.3, "y": 0.25, "z": -0.3}},
+                {"geometry": {"type": "cylinder", "params": {"radiusTop": 0.05, "radiusBottom": 0.05, "height": 0.5}}, "position": {"x": -0.3, "y": 0.25, "z": 0.3}},
+                {"geometry": {"type": "cylinder", "params": {"radiusTop": 0.05, "radiusBottom": 0.05, "height": 0.5}}, "position": {"x": 0.3, "y": 0.25, "z": 0.3}},
+                {"geometry": {"type": "box", "params": {"width": 0.8, "height": 0.6, "depth": 0.1}}, "position": {"x": 0, "y": 0.8, "z": -0.35}}
+                ]}
+                
+                Be creative and detailed in representing each object's actual shape and features.`
               }
             ]
           }],
@@ -390,14 +402,10 @@ Be creative and detailed in representing each object's actual shape and features
           contents: [{
             parts: [{
               text: `Given this current room layout: ${JSON.stringify(items)}
-
-  The room is a 10x10 grid where x and z coordinates range from 0-10.
-
-  User's request: ${layoutPrompt}
-
-  Provide an optimized layout that meets the user's requirements. Return ONLY a JSON array with the new arrangement. Keep ALL the same objects with their components and colors, just reposition them (change x and z coordinates).
-
-  Return the complete array with all objects in the same format, just with updated x and z positions.`
+              The room is a 10x10 grid where x and z coordinates range from 0-10.
+              User's request: ${layoutPrompt}
+              Provide an optimized layout that meets the user's requirements. Return ONLY a JSON array with the new arrangement. Keep ALL the same objects with their components and colors, just reposition them (change x and z coordinates).
+              Return the complete array with all objects in the same format, just with updated x and z positions.`
             }]
           }],
           generationConfig: {
@@ -450,10 +458,10 @@ Be creative and detailed in representing each object's actual shape and features
 
     setFurnitureLoading(true);
     try {
-      const locationText = userLocation.trim() 
-        ? `near ${userLocation}` 
+      const locationText = userLocation.trim()
+        ? `near ${userLocation}`
         : 'available online';
-      
+
       const priceText = priceRange.trim()
         ? `in the ${priceRange} price range`
         : 'at various price points';
@@ -464,16 +472,15 @@ Be creative and detailed in representing each object's actual shape and features
         body: JSON.stringify({
           contents: [{
             parts: [{
-              text: `Find and recommend ${furnitureType} ${locationText} ${priceText}. 
-
-  Provide 5 specific furniture recommendations with:
-  1. Product name/description
-  2. Estimated price
-  3. Where to buy (store/website)
-  4. Key features
-
-  Return ONLY a JSON array in this exact format:
-  [{"name":"Product Name","price":"$XXX","store":"Store Name","features":"Key features description"}]`
+              text: `Find and recommend ${furnitureType} ${locationText} ${priceText}.
+              Provide 5 specific furniture recommendations with:
+              1. Product name/description
+              2. Estimated price
+              3. Where to buy (store/website)
+              4. Direct URL link to the product
+              5. Key features
+              Return ONLY a JSON array in this exact format:
+              [{"name":"Product Name","price":"$XXX","store":"Store Name","url":"https://example.com/product","features":"Key features description"}]`
             }]
           }],
           tools: [{ google_search: {} }],
@@ -487,35 +494,135 @@ Be creative and detailed in representing each object's actual shape and features
       });
 
       const data = await response.json();
-      
+
       if (data.error) {
         throw new Error(data.error.message || 'API Error');
       }
-      
+
       const text = data.candidates[0].content.parts
         .filter(part => part.text)
         .map(part => part.text)
         .join('\n')
         .trim();
 
-      console.log('Raw furniture response:', text);
+      // 1. Find the outer JSON array brackets
+      const start = text.indexOf('[');
+      const end = text.lastIndexOf(']');
 
-      let cleanText = text
-        .replace(/```json\s*/g, '')
-        .replace(/```\s*/g, '')
-        .trim();
-
-      const jsonMatch = cleanText.match(/\[[\s\S]*\]/);
-      if (jsonMatch) {
-        cleanText = jsonMatch[0];
+      if (start === -1 || end === -1) {
+        console.error("No JSON array found in response. Raw Gemini output:", text);
+        throw new Error("No JSON array found in response. Check console for raw output.");
       }
 
-      const recommendations = JSON.parse(cleanText);
-      
-      setFurnitureResults(recommendations);
+      // 2. Extract strictly the JSON part
+      let cleanText = text.substring(start, end + 1);
+
+      // 3. Remove trailing commas (e.g., "[A, B, ]" -> "[A, B]")
+      cleanText = cleanText.replace(/,\s*([\]}])/g, '$1');
+
+      try {
+        const recommendations = JSON.parse(cleanText);
+        setFurnitureResults(recommendations);
+      } catch (parseError) {
+        console.error("JSON Parse Error. Raw Gemini output:", cleanText);
+        throw new Error(`Failed to parse furniture data: ${parseError.message}. Check console for raw output.`);
+      }
     } catch (err) {
       console.error('Furniture search error:', err);
       alert(`Failed to find furniture: ${err.message}`);
+    } finally {
+      setFurnitureLoading(false);
+    }
+  };
+
+  const addFurnitureToRoom = async (furnitureItem) => {
+    setFurnitureLoading(true);
+    try {
+      const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-3-pro-preview:generateContent?key=${apiKey}`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          contents: [{
+            parts: [{
+              text: `Generate a detailed 3D representation for: ${furnitureItem.name}
+
+              Based on the product description: ${furnitureItem.features}
+
+              Create a realistic 3D model using geometric components. Return ONLY a JSON object with no preamble or markdown in this exact format:
+              {
+                "name": "${furnitureItem.name}",
+                "x": 5,
+                "z": 5,
+                "color": "hex color code that matches the furniture style",
+                "components": [
+                  {
+                    "geometry": {"type": "box"|"cylinder"|"sphere"|"cone", "params": {dimensions}},
+                    "position": {"x": 0, "y": 0, "z": 0},
+                    "rotation": {"x": 0, "y": 0, "z": 0},
+                    "color": "hex color (optional)"
+                  }
+                ]
+              }
+
+              Be creative and detailed to accurately represent the furniture's actual shape and features. For example:
+              - A chair should have legs (cylinders), a seat (box), and a backrest
+              - A table should have a top surface and legs
+              - A lamp should have a base, pole, and shade
+              - Use appropriate colors based on the product description`
+            }]
+          }],
+          generationConfig: {
+            temperature: 0.6,
+            topK: 32,
+            topP: 1,
+            maxOutputTokens: 4096
+          }
+        })
+      });
+
+      const data = await response.json();
+
+      if (data.error) {
+        throw new Error(data.error.message || 'API Error');
+      }
+
+      const text = data.candidates[0].content.parts[0].text;
+
+      // Find the outer JSON object brackets
+      const start = text.indexOf('{');
+      const end = text.lastIndexOf('}');
+
+      if (start === -1 || end === -1) {
+        console.error("No JSON object found in response. Raw Gemini output:", text);
+        throw new Error("No JSON object found in response. Check console for raw output.");
+      }
+
+      // Extract strictly the JSON part
+      let cleanText = text.substring(start, end + 1);
+
+      // Remove trailing commas
+      cleanText = cleanText.replace(/,\s*([\]}])/g, '$1');
+
+      try {
+        const newFurniture = JSON.parse(cleanText);
+
+        // Add the new furniture to the items array
+        setItems(prevItems => [...prevItems, newFurniture]);
+
+        // Close the furniture modal and switch to AR view
+        setShowFurnitureModal(false);
+        setView('ar');
+
+        alert(`${furnitureItem.name} added to your room! You can drag it to reposition.`);
+      } catch (parseError) {
+        console.error("JSON Parse Error. Raw Gemini output:", cleanText);
+        throw new Error(`Failed to parse furniture 3D data: ${parseError.message}. Check console for raw output.`);
+      }
+    } catch (err) {
+      console.error('Add furniture error:', err);
+      alert(`Failed to add furniture: ${err.message}`);
     } finally {
       setFurnitureLoading(false);
     }
@@ -1235,8 +1342,28 @@ Be creative and detailed in representing each object's actual shape and features
                       <p className={isDarkMode ? "text-sm text-slate-400 mb-2" : "text-sm text-gray-600 mb-2"}>
                         <strong>Store:</strong> {item.store}
                       </p>
-                      <p className={isDarkMode ? "text-sm text-slate-300 border-t border-white/5 pt-2" : "text-sm text-gray-700"}>{item.features}</p>
+                      <p className={isDarkMode ? "text-sm text-slate-300 border-t border-white/5 pt-2" : "text-sm text-gray-700 mb-3"}>{item.features}</p>
+                      <div className="flex gap-2">
+                      {item.url && (
+                        <a
+                          href={item.url}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="inline-flex items-center gap-2 px-4 py-2 bg-green-600 text-white rounded-lg text-sm font-medium hover:bg-green-700 transition"
+                        >
+                          <Search size={16} />
+                          View Product
+                        </a>
+                      )}
+                      <button
+                        onClick={() => addFurnitureToRoom(item)}
+                        className="inline-flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 transition"
+                      >
+                        <Eye size={16} />
+                        Add to Room
+                      </button>
                     </div>
+                  </div>
                   ))}
                 </div>
               )}
