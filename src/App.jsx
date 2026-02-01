@@ -1,8 +1,6 @@
+// src/App.jsx
 import React, { useState, useRef, useEffect } from 'react';
-import { 
-  Upload, RotateCcw, Move, Eye, Loader2, ZoomIn, RotateCw, 
-  Sparkles, Search, MapPin, DollarSign, X, Terminal, Moon, Sun, Wand2, Armchair, Box, User
-} from 'lucide-react';
+import { Upload, RotateCcw, Move, Eye, Loader2, ZoomIn, RotateCw, Sparkles, Search, MapPin, DollarSign, X, Lightbulb, Terminal, ChevronRight } from 'lucide-react';
 import * as THREE from 'three';
 
 const SYSTEM_LOGS = [
@@ -38,8 +36,7 @@ export default function RoomRedesigner() {
   const [furnitureLoading, setFurnitureLoading] = useState(false);
   const [furnitureResults, setFurnitureResults] = useState([]);
   const [selectedIdx, setSelectedIdx] = useState(null);
-  const [isDarkMode, setIsDarkMode] = useState(true); // Changed to true for default dark mode
-  const [isFirstPerson, setIsFirstPerson] = useState(false);
+  const [addingToRoom, setAddingToRoom] = useState(null);
   
   const canvasRef = useRef(null);
   const sceneRef = useRef(null);
@@ -54,7 +51,6 @@ export default function RoomRedesigner() {
   const isRotatingRef = useRef(false);
   const dragPlaneRef = useRef(null);
   const lastMouseRef = useRef({ x: 0, y: 0 });
-  const targetRef = useRef(new THREE.Vector3(0, 0, 0));
 
   useEffect(() => {
     let interval;
@@ -239,7 +235,7 @@ export default function RoomRedesigner() {
     const sprite = new THREE.Sprite(material);
     const aspectRatio = canvasWidth / canvasHeight;
     const spriteHeight = 0.5;
-    const spriteWidth = spriteHeight * aspectRatio;
+    const spriteWidth = spriteHeight *aspectRatio;
     
     sprite.scale.set(spriteWidth, spriteHeight, 1);
     return sprite;
@@ -324,7 +320,7 @@ export default function RoomRedesigner() {
       });
 
       const data = await response.json();
-      
+
       if (data.error) {
         let errorMsg = data.error.message || 'API Error';
         if (errorMsg.includes('quota') || errorMsg.includes('Quota')) {
@@ -332,52 +328,64 @@ export default function RoomRedesigner() {
         }
         throw new Error(errorMsg);
       }
-      
+
+      // Get text response
       const text = data.candidates[0].content.parts[0].text;
 
-      // More aggressive cleaning
-      let cleanText = text.trim();
+      // 1. Find the outer JSON array brackets
+      const start = text.indexOf('[');
+      let end = text.lastIndexOf(']');
 
-      // Remove markdown code blocks
-      cleanText = cleanText.replace(/```json\s*/g, '').replace(/```\s*/g, '');
-
-      // Find JSON array boundaries
-      const start = cleanText.indexOf('[');
-      const end = cleanText.lastIndexOf(']');
-
-      if (start === -1 || end === -1) {
+      let cleanText;
+      if (start === -1) {
         throw new Error("No JSON array found in response");
       }
 
-      cleanText = cleanText.substring(start, end + 1);
+      if (end === -1 || end <= start) {
+        // Response was truncated — no closing ']' found
+        // Try to recover by closing any open objects and the array
+        cleanText = text.substring(start);
+        // Remove the last incomplete object (after the last complete '},')
+        const lastCompleteObj = cleanText.lastIndexOf('},');
+        if (lastCompleteObj !== -1) {
+          cleanText = cleanText.substring(0, lastCompleteObj + 1) + ']';
+        } else {
+          throw new Error("Response was truncated and could not be recovered. Try analyzing with fewer images.");
+        }
+      } else {
+        cleanText = text.substring(start, end + 1);
+      }
 
-      // Remove trailing commas
-      cleanText = cleanText.replace(/,(\s*[\]}])/g, '$1');
-
-      // Remove comments (single and multi-line)
-      cleanText = cleanText.replace(/\/\*[\s\S]*?\*\//g, '');
-      cleanText = cleanText.replace(/\/\/.*/g, '');
-
-      // Log for debugging
-      console.log("Cleaned JSON:", cleanText);
+      // Remove trailing commas (e.g., "[A, B, ]" -> "[A, B]")
+      cleanText = cleanText.replace(/,\s*([\]}])/g, '$1');
 
       try {
         const detectedItems = JSON.parse(cleanText);
         setItems(detectedItems);
         setView('ar');
       } catch (parseError) {
-        console.error("JSON Parse Error:", parseError);
-        console.error("Problematic JSON:", cleanText);
-        
-        // Try to identify the problem area
-        const errorPos = parseError.message.match(/position (\d+)/);
-        if (errorPos) {
-          const pos = parseInt(errorPos[1]);
-          const context = cleanText.substring(Math.max(0, pos - 100), Math.min(cleanText.length, pos + 100));
-          console.error("Context around error:", context);
+        // Second recovery attempt: try closing unclosed braces/brackets
+        try {
+          let recovered = cleanText;
+          const lastBrace = recovered.lastIndexOf('}');
+          if (lastBrace !== -1) {
+            recovered = recovered.substring(0, lastBrace + 1);
+            // Ensure array is closed
+            if (!recovered.trimEnd().endsWith(']')) {
+              recovered += ']';
+            }
+            recovered = recovered.replace(/,\s*([\]}])/g, '$1');
+            const detectedItems = JSON.parse(recovered);
+            console.warn(`Recovered ${detectedItems.length} items from truncated response`);
+            setItems(detectedItems);
+            setView('ar');
+          } else {
+            throw parseError;
+          }
+        } catch (recoveryError) {
+          console.error("JSON Parse Error. Raw text:", cleanText);
+          throw new Error(`Failed to parse 3D data: ${parseError.message}`);
         }
-        
-        throw new Error(`Failed to parse 3D data. Check console for details.`);
       }
     } catch (err) {
       console.error('Analysis error:', err);
@@ -397,7 +405,9 @@ export default function RoomRedesigner() {
     try {
       const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-3-pro-preview:generateContent?key=${apiKey}`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+        },
         body: JSON.stringify({
           contents: [{
             parts: [{
@@ -412,7 +422,7 @@ export default function RoomRedesigner() {
             temperature: 0.7,
             topK: 40,
             topP: 0.95,
-            maxOutputTokens: 4096
+            maxOutputTokens: 8192
           }
         })
       });
@@ -424,18 +434,7 @@ export default function RoomRedesigner() {
       }
       
       const text = data.candidates[0].content.parts[0].text.trim();
-      console.log('Raw layout response:', text);
-
-      let cleanText = text
-        .replace(/```json\s*/g, '')
-        .replace(/```\s*/g, '')
-        .trim();
-
-      const jsonMatch = cleanText.match(/\[[\s\S]*\]/);
-      if (jsonMatch) {
-        cleanText = jsonMatch[0];
-      }
-
+      const cleanText = text.replace(/```json|```/g, '').trim();
       const newLayout = JSON.parse(cleanText);
       
       setItems(newLayout);
@@ -468,27 +467,31 @@ export default function RoomRedesigner() {
 
       const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-3-pro-preview:generateContent?key=${apiKey}`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+        },
         body: JSON.stringify({
           contents: [{
             parts: [{
-              text: `Find and recommend ${furnitureType} ${locationText} ${priceText}.
-              Provide 5 specific furniture recommendations with:
-              1. Product name/description
-              2. Estimated price
-              3. Where to buy (store/website)
-              4. Direct URL link to the product
-              5. Key features
+              text: `Search the web for ${furnitureType} ${locationText} ${priceText}.
+              Find 5 real products that are currently for sale on major retailers (Amazon, Wayfair, IKEA, Target, Home Depot, Walmart, etc.).
+              For each product, provide:
+              1. The exact product name as listed on the retailer's website
+              2. The actual listed price
+              3. The retailer/store name (must be a real retailer)
+              4. Key features
               Return ONLY a JSON array in this exact format:
-              [{"name":"Product Name","price":"$XXX","store":"Store Name","url":"https://example.com/product","features":"Key features description"}]`
+              [{"name":"Exact Product Name","price":"$XXX","store":"Store Name","features":"Key features description"}]`
             }]
           }],
-          tools: [{ google_search: {} }],
+          tools: [{
+            google_search: {}
+          }],
           generationConfig: {
-            temperature: 0.7,
+            temperature: 0.4,
             topK: 40,
             topP: 0.95,
-            maxOutputTokens: 2048
+            maxOutputTokens: 8192
           }
         })
       });
@@ -499,7 +502,9 @@ export default function RoomRedesigner() {
         throw new Error(data.error.message || 'API Error');
       }
 
-      const text = data.candidates[0].content.parts
+      const candidate = data.candidates[0];
+
+      const text = candidate.content.parts
         .filter(part => part.text)
         .map(part => part.text)
         .join('\n')
@@ -522,6 +527,41 @@ export default function RoomRedesigner() {
 
       try {
         const recommendations = JSON.parse(cleanText);
+
+        // Map known retailers to their search URL patterns
+        const storeSearchUrls = {
+          'amazon': (q) => `https://www.amazon.com/s?k=${q}`,
+          'wayfair': (q) => `https://www.wayfair.com/keyword.php?keyword=${q}`,
+          'ikea': (q) => `https://www.ikea.com/us/en/search/?q=${q}`,
+          'target': (q) => `https://www.target.com/s?searchTerm=${q}`,
+          'walmart': (q) => `https://www.walmart.com/search?q=${q}`,
+          'home depot': (q) => `https://www.homedepot.com/s/${q}`,
+          'lowes': (q) => `https://www.lowes.com/search?searchTerm=${q}`,
+          'lowe\'s': (q) => `https://www.lowes.com/search?searchTerm=${q}`,
+          'overstock': (q) => `https://www.overstock.com/search?keywords=${q}`,
+          'west elm': (q) => `https://www.westelm.com/search/?words=${q}`,
+          'pottery barn': (q) => `https://www.potterybarn.com/search/?words=${q}`,
+          'crate & barrel': (q) => `https://www.crateandbarrel.com/search?query=${q}`,
+          'crate and barrel': (q) => `https://www.crateandbarrel.com/search?query=${q}`,
+          'cb2': (q) => `https://www.cb2.com/search?query=${q}`,
+          'costco': (q) => `https://www.costco.com/CatalogSearch?keyword=${q}`,
+        };
+
+        for (const rec of recommendations) {
+          const storeLower = (rec.store || '').toLowerCase();
+          const productQuery = encodeURIComponent(rec.name);
+
+          // Try to match to a known retailer's search page
+          const storeKey = Object.keys(storeSearchUrls).find(key => storeLower.includes(key));
+          if (storeKey) {
+            rec.url = storeSearchUrls[storeKey](productQuery);
+          } else {
+            // Fallback: Google search scoped to the store's site
+            const siteQuery = encodeURIComponent(`${rec.name} site:${rec.store.toLowerCase().replace(/[^a-z0-9]/g, '')}.com`);
+            rec.url = `https://www.google.com/search?q=${siteQuery}`;
+          }
+        }
+
         setFurnitureResults(recommendations);
       } catch (parseError) {
         console.error("JSON Parse Error. Raw Gemini output:", cleanText);
@@ -535,46 +575,46 @@ export default function RoomRedesigner() {
     }
   };
 
-  const addFurnitureToRoom = async (furnitureItem) => {
-    setFurnitureLoading(true);
+  const addFurnitureToRoom = async (furnitureItem, idx) => {
+    setAddingToRoom(idx);
     try {
       const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-3-pro-preview:generateContent?key=${apiKey}`, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           contents: [{
             parts: [{
-              text: `Generate a detailed 3D representation for: ${furnitureItem.name}
+              text: `Generate a detailed 3D representation of this furniture item:
+              Name: ${furnitureItem.name}
+              Features: ${furnitureItem.features || ''}
 
-              Based on the product description: ${furnitureItem.features}
+              Return ONLY a single JSON object (not an array) with:
+              - name: "${furnitureItem.name}"
+              - x: 5
+              - z: 5
+              - color: hex color code matching the furniture
+              - components: array of geometric shapes that make up the object, where each component has:
+                - geometry: { type: "box"|"cylinder"|"sphere"|"cone"|"plane", params: {dimensions} }
+                - position: { x, y, z } relative to object center (y=0 is the floor)
+                - rotation: { x, y, z } in radians (optional)
+                - color: hex color (optional, overrides base color)
+                - emissive: hex color for glowing parts (optional)
+                - emissiveIntensity: 0-1 (optional)
 
-              Create a realistic 3D model using geometric components. Return ONLY a JSON object with no preamble or markdown in this exact format:
-              {
-                "name": "${furnitureItem.name}",
-                "x": 5,
-                "z": 5,
-                "color": "hex color code that matches the furniture style",
-                "components": [
-                  {
-                    "geometry": {"type": "box"|"cylinder"|"sphere"|"cone", "params": {dimensions}},
-                    "position": {"x": 0, "y": 0, "z": 0},
-                    "rotation": {"x": 0, "y": 0, "z": 0},
-                    "color": "hex color (optional)"
-                  }
-                ]
-              }
+              Use realistic proportions and multiple components to capture the shape. For example a chair should have a seat, backrest, and 4 legs as separate components. Use real-world dimensions in meters.
 
-              Be creative and detailed to accurately represent the furniture's actual shape and features. For example:
-              - A chair should have legs (cylinders), a seat (box), and a backrest
-              - A table should have a top surface and legs
-              - A lamp should have a base, pole, and shade
-              - Use appropriate colors based on the product description`
+              Example for a simple coffee table:
+              {"name":"coffee table","x":5,"z":5,"color":"8B4513","components":[
+                {"geometry":{"type":"box","params":{"width":1.2,"height":0.05,"depth":0.6}},"position":{"x":0,"y":0.45,"z":0}},
+                {"geometry":{"type":"cylinder","params":{"radiusTop":0.04,"radiusBottom":0.04,"height":0.45}},"position":{"x":-0.5,"y":0.225,"z":-0.25}},
+                {"geometry":{"type":"cylinder","params":{"radiusTop":0.04,"radiusBottom":0.04,"height":0.45}},"position":{"x":0.5,"y":0.225,"z":-0.25}},
+                {"geometry":{"type":"cylinder","params":{"radiusTop":0.04,"radiusBottom":0.04,"height":0.45}},"position":{"x":-0.5,"y":0.225,"z":0.25}},
+                {"geometry":{"type":"cylinder","params":{"radiusTop":0.04,"radiusBottom":0.04,"height":0.45}},"position":{"x":0.5,"y":0.225,"z":0.25}}
+              ]}`
             }]
           }],
           generationConfig: {
-            temperature: 0.6,
+            temperature: 0.4,
             topK: 32,
             topP: 1,
             maxOutputTokens: 4096
@@ -588,43 +628,33 @@ export default function RoomRedesigner() {
         throw new Error(data.error.message || 'API Error');
       }
 
-      const text = data.candidates[0].content.parts[0].text;
+      const text = data.candidates[0].content.parts[0].text.trim();
 
-      // Find the outer JSON object brackets
+      // Find the JSON object
       const start = text.indexOf('{');
       const end = text.lastIndexOf('}');
 
       if (start === -1 || end === -1) {
-        console.error("No JSON object found in response. Raw Gemini output:", text);
-        throw new Error("No JSON object found in response. Check console for raw output.");
+        throw new Error('No JSON object found in response');
       }
 
-      // Extract strictly the JSON part
       let cleanText = text.substring(start, end + 1);
-
-      // Remove trailing commas
       cleanText = cleanText.replace(/,\s*([\]}])/g, '$1');
 
-      try {
-        const newFurniture = JSON.parse(cleanText);
+      const newFurniture = JSON.parse(cleanText);
+      // Ensure position is center of room
+      newFurniture.x = 5;
+      newFurniture.z = 5;
+      newFurniture.name = furnitureItem.name;
 
-        // Add the new furniture to the items array
-        setItems(prevItems => [...prevItems, newFurniture]);
-
-        // Close the furniture modal and switch to AR view
-        setShowFurnitureModal(false);
-        setView('ar');
-
-        alert(`${furnitureItem.name} added to your room! You can drag it to reposition.`);
-      } catch (parseError) {
-        console.error("JSON Parse Error. Raw Gemini output:", cleanText);
-        throw new Error(`Failed to parse furniture 3D data: ${parseError.message}. Check console for raw output.`);
-      }
+      setItems(prevItems => [...prevItems, newFurniture]);
+      setShowFurnitureModal(false);
+      setView('ar');
     } catch (err) {
-      console.error('Add furniture error:', err);
-      alert(`Failed to add furniture: ${err.message}`);
+      console.error('Add to room error:', err);
+      alert(`Failed to generate 3D model: ${err.message}`);
     } finally {
-      setFurnitureLoading(false);
+      setAddingToRoom(null);
     }
   };
 
@@ -632,65 +662,39 @@ export default function RoomRedesigner() {
     if (view !== 'ar' || !canvasRef.current) return;
 
     const scene = new THREE.Scene();
-    scene.background = new THREE.Color(isDarkMode ? 0x0f172a : 0xf0f0f0);
+    scene.background = new THREE.Color(0xf0f0f0);
     sceneRef.current = scene;
 
     const camera = new THREE.PerspectiveCamera(75, canvasRef.current.clientWidth / canvasRef.current.clientHeight, 0.1, 1000);
-    
-    // Initial Camera Position based on View Mode
-    if (isFirstPerson) {
-      camera.position.set(0, 1.6, 4);
-      targetRef.current.set(0, 1.6, 0);
-    } else {
-      camera.position.set(0, 8, 12);
-      targetRef.current.set(0, 0, 0);
-    }
-    
-    camera.lookAt(targetRef.current);
+    camera.position.set(0, 8, 12);
+    camera.lookAt(0, 0, 0);
     cameraRef.current = camera;
 
-    const renderer = new THREE.WebGLRenderer({ 
-      canvas: canvasRef.current, 
-      antialias: true,
-      alpha: isDarkMode 
-    });
+    const renderer = new THREE.WebGLRenderer({ canvas: canvasRef.current, antialias: true });
     renderer.setSize(canvasRef.current.clientWidth, canvasRef.current.clientHeight);
     renderer.shadowMap.enabled = true;
     rendererRef.current = renderer;
 
-    if (isDarkMode) {
-      const ambientLight = new THREE.AmbientLight(0xffffff, 0.5);
-      scene.add(ambientLight);
-      const spotLight = new THREE.SpotLight(0xffffff, 1);
-      spotLight.position.set(5, 15, 5);
-      spotLight.angle = Math.PI / 4;
-      spotLight.castShadow = true;
-      scene.add(spotLight);
-    } else {
-      const ambientLight = new THREE.AmbientLight(0xffffff, 0.6);
-      scene.add(ambientLight);
-      const directionalLight = new THREE.DirectionalLight(0xffffff, 0.8);
-      directionalLight.position.set(5, 10, 5);
-      directionalLight.castShadow = true;
-      scene.add(directionalLight);
-    }
+    const ambientLight = new THREE.AmbientLight(0xffffff, 0.6);
+    scene.add(ambientLight);
+    const directionalLight = new THREE.DirectionalLight(0xffffff, 0.8);
+    directionalLight.position.set(5, 10, 5);
+    directionalLight.castShadow = true;
+    scene.add(directionalLight);
 
     const floorGeometry = new THREE.PlaneGeometry(20, 20);
-    const floorMaterial = isDarkMode
-      ? new THREE.MeshStandardMaterial({ color: 0x1e293b, roughness: 0.2, metalness: 0.5 })
-      : new THREE.MeshStandardMaterial({ color: 0xe0e0e0 });
-      
+    const floorMaterial = new THREE.MeshStandardMaterial({ color: 0xe0e0e0 });
     const floor = new THREE.Mesh(floorGeometry, floorMaterial);
     floor.rotation.x = -Math.PI / 2;
     floor.receiveShadow = true;
     scene.add(floor);
 
-    const gridHelper = isDarkMode
-      ? new THREE.GridHelper(20, 20, 0x38bdf8, 0x334155)
-      : new THREE.GridHelper(20, 20, 0x888888, 0xcccccc);
+    const gridHelper = new THREE.GridHelper(20, 20, 0x888888, 0xcccccc);
     scene.add(gridHelper);
 
-    const dragPlane = new THREE.Mesh(new THREE.PlaneGeometry(100, 100), new THREE.MeshBasicMaterial({ visible: false }));
+    const dragPlaneGeometry = new THREE.PlaneGeometry(100, 100);
+    const dragPlaneMaterial = new THREE.MeshBasicMaterial({ visible: false });
+    const dragPlane = new THREE.Mesh(dragPlaneGeometry, dragPlaneMaterial);
     dragPlane.rotation.x = -Math.PI / 2;
     scene.add(dragPlane);
     dragPlaneRef.current = dragPlane;
@@ -775,14 +779,8 @@ export default function RoomRedesigner() {
         
         camera.position.x = radius * Math.cos(newAngle);
         camera.position.z = radius * Math.sin(newAngle);
-
-        if (!isFirstPerson) {
-           camera.position.y = Math.max(2, camera.position.y - deltaY * 0.05);
-        } else {
-           camera.position.y = 1.6;
-        }
-        
-        camera.lookAt(targetRef.current);
+        camera.position.y = Math.max(2, camera.position.y - deltaY * 0.05);
+        camera.lookAt(0, 0, 0);
         
         lastMouseRef.current = { x: e.clientX, y: e.clientY };
         return;
@@ -841,26 +839,14 @@ export default function RoomRedesigner() {
 
     const handleWheel = (e) => {
       e.preventDefault();
-      const zoomSpeed = isFirstPerson ? 0.05 : 0.1;
+      const zoomSpeed = 0.1;
       const delta = e.deltaY > 0 ? 1 : -1;
       
       const direction = new THREE.Vector3();
       camera.getWorldDirection(direction);
       
       camera.position.addScaledVector(direction, delta * zoomSpeed);
-      
-      if (isFirstPerson) {
-        const maxRadius = 6;
-        const radius = Math.sqrt(camera.position.x**2 + camera.position.z**2);
-        if (radius > maxRadius) {
-           const ratio = maxRadius / radius;
-           camera.position.x *= ratio;
-           camera.position.z *= ratio;
-        }
-        camera.position.y = 1.6;
-      } else {
-        camera.position.y = Math.max(2, Math.min(20, camera.position.y));
-      }
+      camera.position.y = Math.max(2, Math.min(20, camera.position.y));
     };
 
     const handleContextMenu = (e) => {
@@ -889,461 +875,348 @@ export default function RoomRedesigner() {
       }
       renderer.dispose();
     };
-  }, [view, items, isDarkMode, isFirstPerson]);
+  }, [view, items]);
 
   const resetView = () => { setView('upload'); setImages([]); setItems([]); };
 
-  // Unified UI - Both modes now use the same structure
-  const bgClass = isDarkMode 
-    ? "w-full min-h-screen bg-slate-950 text-slate-100 font-sans relative overflow-hidden"
-    : "w-full min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 text-gray-800 flex flex-col";
-
   return (
-    <div className={bgClass}>
-      {/* Background Ambience (Dark Mode Only) */}
-      {isDarkMode && (
-        <>
-          <div className="absolute top-[-10%] left-[-10%] w-[500px] h-[500px] bg-purple-600/20 rounded-full blur-[100px] animate-pulse pointer-events-none"></div>
-          <div className="absolute bottom-[-10%] right-[-10%] w-[500px] h-[500px] bg-blue-600/20 rounded-full blur-[100px] animate-pulse pointer-events-none delay-1000"></div>
-        </>
-      )}
-
-      <div className={isDarkMode ? "relative z-10 flex flex-col h-screen" : "flex flex-col h-screen"}>
-        {/* Header */}
-        <header className={isDarkMode 
-          ? "px-6 py-4 flex justify-between items-center backdrop-blur-md bg-slate-950/50 border-b border-white/10 sticky top-0 z-50"
-          : "px-6 py-4 flex justify-between items-center bg-white shadow-md sticky top-0 z-50"
-        }>
-          <div className="flex items-center gap-3">
-            <div className={isDarkMode 
-              ? "p-2 bg-gradient-to-br from-indigo-500 to-purple-600 rounded-xl shadow-lg shadow-purple-500/20"
-              : "w-10 h-10 bg-gradient-to-br from-blue-500 to-indigo-600 rounded-lg flex items-center justify-center"
-            }>
-              <Sparkles className="text-white" size={24} />
-            </div>
-            <h1 className={isDarkMode 
-              ? "text-2xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-white to-slate-400"
-              : "text-2xl font-bold text-gray-800"
-            }>
-              Riko<span className="font-light">RoomRedesigner</span>
-            </h1>
+    <div className="w-full h-screen bg-gradient-to-br from-blue-50 to-indigo-100 flex flex-col">
+      <div className="bg-white shadow-md p-4 flex justify-between items-center">
+        <div className="flex items-center gap-3">
+          <div className="w-10 h-10 bg-gradient-to-br from-blue-500 to-indigo-600 rounded-lg flex items-center justify-center">
+            <Eye className="text-white" size={24} />
           </div>
-          
-          <div className="flex items-center gap-3">
-            {view === 'ar' && (
-              <div className="flex gap-3">
-                <button 
-                  onClick={() => setIsFirstPerson(!isFirstPerson)}
-                  className={isDarkMode
-                    ? `flex items-center gap-2 px-4 py-2 rounded-full border transition-all backdrop-blur-sm ${isFirstPerson ? 'bg-blue-600 border-blue-500 text-white' : 'bg-white/5 border-white/10 hover:bg-white/10 text-white'}`
-                    : `flex items-center gap-2 px-4 py-2 rounded-lg transition border ${isFirstPerson ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-gray-700 border-gray-300 hover:bg-gray-50'}`
-                  }
-                >
-                  {isFirstPerson ? <Box size={18} /> : <User size={18} />}
-                  {isFirstPerson ? 'Orbit View' : 'Go Inside'}
-                </button>
-                <button 
-                  onClick={() => setShowLayoutModal(true)} 
-                  className={isDarkMode
-                    ? "flex items-center gap-2 px-4 py-2 bg-white/5 hover:bg-white/10 text-white rounded-full border border-white/10 transition-all backdrop-blur-sm"
-                    : "flex items-center gap-2 px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition"
-                  }
-                >
-                  <Wand2 size={18} className={isDarkMode ? "text-purple-400" : ""} /> AI Layout
-                </button>
-                <button 
-                  onClick={() => setShowFurnitureModal(true)} 
-                  className={isDarkMode
-                    ? "flex items-center gap-2 px-4 py-2 bg-white/5 hover:bg-white/10 text-white rounded-full border border-white/10 transition-all backdrop-blur-sm"
-                    : "flex items-center gap-2 px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition"
-                  }
-                >
-                  <Search size={18} className={isDarkMode ? "text-emerald-400" : ""} /> Find Furniture
-                </button>
-                <button 
-                  onClick={resetView} 
-                  className={isDarkMode
-                    ? "flex items-center gap-2 px-4 py-2 bg-red-500/10 hover:bg-red-500/20 text-red-200 rounded-full border border-red-500/20 transition-all"
-                    : "flex items-center gap-2 px-4 py-2 bg-gray-600 text-white rounded-lg hover:bg-gray-700 transition"
-                  }
-                >
-                  <RotateCcw size={18} /> Reset
-                </button>
-              </div>
-            )}
-            <button 
-              onClick={() => setIsDarkMode(!isDarkMode)} 
-              className={isDarkMode
-                ? "p-2 rounded-full hover:bg-white/10 text-slate-400 hover:text-white transition-all"
-                : "p-2 rounded-lg hover:bg-gray-100 transition text-gray-600"
-              }
+          <h1 className="text-2xl font-bold text-gray-800">AI Room Redesigner</h1>
+        </div>
+        {view === 'ar' && (
+          <div className="flex gap-3">
+            <button
+              onClick={() => setShowLayoutModal(true)}
+              className="flex items-center gap-2 px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition"
             >
-              {isDarkMode ? <Sun size={20} /> : <Moon size={20} />}
+              <Sparkles size={18} />
+              AI Layout
+            </button>
+            <button
+              onClick={() => setShowFurnitureModal(true)}
+              className="flex items-center gap-2 px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition"
+            >
+              <Search size={18} />
+              Find Furniture
+            </button>
+            <button
+              onClick={resetView}
+              className="flex items-center gap-2 px-4 py-2 bg-gray-600 text-white rounded-lg hover:bg-gray-700 transition"
+            >
+              <RotateCcw size={18} />
+              New Room
             </button>
           </div>
-        </header>
-
-        {/* Upload View */}
-        {view === 'upload' && (
-          <div className="flex-1 flex items-center justify-center p-6">
-            <div className={isDarkMode
-              ? "bg-slate-900/60 backdrop-blur-xl border border-white/10 rounded-3xl shadow-2xl p-8 max-w-2xl w-full relative"
-              : "bg-white rounded-2xl shadow-2xl p-8 max-w-2xl w-full"
-            }>
-              <div className="text-center mb-8">
-                <h2 className={isDarkMode ? "text-4xl font-bold text-white mb-4" : "text-3xl font-bold text-gray-800 mb-3"}>
-                  Redesign Your Space
-                </h2>
-                <p className={isDarkMode ? "text-slate-400" : "text-gray-600"}>
-                  Upload a photo and let AI transform it into an interactive 3D playground.
-                </p>
-              </div>
-
-              <div className="space-y-6">
-                {showApiInput && (
-                  <div className={isDarkMode ? "bg-slate-950/50 p-4 rounded-xl border border-white/5" : ""}>
-                    <label className={isDarkMode 
-                      ? "block text-sm font-medium text-slate-400 mb-2 flex items-center gap-2"
-                      : "block text-sm font-medium text-gray-700 mb-2"
-                    }>
-                      {isDarkMode && <Terminal size={14} />} Gemini API Key
-                    </label>
-                    <input
-                      type="password"
-                      value={apiKey}
-                      onChange={(e) => setApiKey(e.target.value)}
-                      placeholder="Enter your API key..."
-                      className={isDarkMode
-                        ? "w-full px-4 py-3 bg-slate-900 border border-slate-700 rounded-lg focus:ring-2 focus:ring-purple-500 text-white placeholder-slate-600 outline-none"
-                        : "w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                      }
-                    />
-                    {!isDarkMode && (
-                      <p className="mt-2 text-xs text-gray-500">
-                        Get your API key from{' '}
-                        <a href="https://aistudio.google.com/app/apikey" target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:underline">
-                          Google AI Studio
-                        </a>
-                      </p>
-                    )}
-                  </div>
-                )}
-
-                <label className="block group cursor-pointer">
-                  <div className={isDarkMode
-                    ? "border-2 border-dashed border-slate-700 rounded-2xl p-12 text-center hover:border-purple-500 hover:bg-purple-500/5 transition-all"
-                    : "border-3 border-dashed border-blue-300 rounded-xl p-12 text-center hover:border-blue-500 hover:bg-blue-50 transition"
-                  }>
-                    <div className={isDarkMode
-                      ? "w-16 h-16 bg-slate-800 rounded-full flex items-center justify-center mx-auto mb-4 group-hover:scale-110 transition-transform"
-                      : "mx-auto mb-4"
-                    }>
-                      <Upload className={isDarkMode ? "text-purple-400" : "text-blue-500"} size={isDarkMode ? 32 : 48} />
-                    </div>
-                    <p className={isDarkMode ? "text-xl font-semibold text-white mb-2" : "text-lg font-semibold text-gray-700 mb-2"}>
-                      Drop room images here
-                    </p>
-                    <p className={isDarkMode ? "text-sm text-slate-500" : "text-sm text-gray-500"}>
-                      Supports PNG, JPG (Max 5)
-                    </p>
-                    <input type="file" accept="image/*" multiple onChange={handleImageUpload} className="hidden" />
-                  </div>
-                </label>
-
-                {images.length > 0 && (
-                  <div className="space-y-4">
-                    <div className={isDarkMode ? "grid grid-cols-5 gap-2" : "relative overflow-hidden rounded-lg shadow-lg bg-gray-50 border border-gray-200"}>
-                      <div className={isDarkMode ? "contents" : "grid grid-cols-2 md:grid-cols-3 gap-2 p-2"}>
-                        {images.map((img, idx) => (
-                          <div key={idx} className={isDarkMode ? "" : "relative group aspect-square"}>
-                            <img 
-                              src={img} 
-                              alt={`Room view ${idx + 1}`}
-                              className={isDarkMode 
-                                ? "w-full aspect-square object-cover rounded-lg border border-white/10"
-                                : "w-full h-full object-cover rounded-lg"
-                              } 
-                            />
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                    <button
-                      onClick={analyzeRoom}
-                      disabled={loading || !apiKey}
-                      className={isDarkMode
-                        ? "w-full py-4 bg-gradient-to-r from-purple-600 to-blue-600 text-white rounded-xl font-bold text-lg hover:shadow-lg hover:shadow-purple-500/25 hover:scale-[1.01] transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-3"
-                        : "w-full py-4 bg-gradient-to-r from-blue-500 to-indigo-600 text-white rounded-lg font-semibold text-lg hover:from-blue-600 hover:to-indigo-700 transition disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-3"
-                      }
-                    >
-                      {loading ? (
-                        <>
-                          <Loader2 className="animate-spin" size={24} />
-                          Analyzing...
-                        </>
-                      ) : (
-                        <>
-                          <Eye size={24} />
-                          Generate 3D Room
-                        </>
-                      )}
-                    </button>
-                    <button 
-                      onClick={() => setImages([])} 
-                      disabled={loading} 
-                      className={isDarkMode
-                        ? "w-full py-2 text-slate-400 hover:text-red-400 text-sm font-medium transition"
-                        : "w-full py-2 text-gray-500 hover:text-red-500 text-sm font-medium transition"
-                      }
-                    >
-                      Clear Images
-                    </button>
-                  </div>
-                )}
-                
-                {loading && (
-                  <div className={isDarkMode
-                    ? "bg-black/50 rounded-xl p-4 font-mono text-sm text-green-400 border border-green-900/30 h-32 overflow-y-auto"
-                    : "bg-gray-900 rounded-xl p-4 font-mono text-sm text-green-400 border border-gray-700 h-32 overflow-y-auto"
-                  }>
-                    {logs.map((log, i) => <div key={i} className="mb-1 opacity-80">{log}</div>)}
-                  </div>
-                )}
-              </div>
-            </div>
-          </div>
         )}
+      </div>
 
-        {/* AR View */}
-        {view === 'ar' && (
-          <div className="flex-1 flex flex-col relative">
-            <div className={isDarkMode ? "flex-1 relative bg-slate-900" : "flex-1 relative"}>
-              {/* Controls Overlay */}
-              <div className={isDarkMode
-                ? "absolute top-4 left-1/2 -translate-x-1/2 z-20 bg-slate-950/80 backdrop-blur-md px-6 py-2 rounded-full border border-white/10 text-xs font-medium text-slate-300 flex gap-6 shadow-lg pointer-events-none"
-                : "absolute top-4 left-1/2 -translate-x-1/2 z-20 bg-white/90 backdrop-blur-md px-6 py-2 rounded-full border border-gray-200 text-xs font-medium text-gray-700 flex gap-6 shadow-lg pointer-events-none"
-              }>
-                <span className="flex items-center gap-2">
-                  <Move size={14} className={isDarkMode ? "text-blue-400" : "text-blue-600"} /> Drag
-                </span>
-                <span className="flex items-center gap-2">
-                  <RotateCw size={14} className={isDarkMode ? "text-purple-400" : "text-purple-600"} /> Rotate
-                </span>
-                <span className="flex items-center gap-2">
-                  <ZoomIn size={14} className={isDarkMode ? "text-green-400" : "text-green-600"} /> Zoom
-                </span>
-              </div>
-              
-              {/* Status Message */}
-              <div className={isDarkMode
-                ? "absolute bottom-4 left-1/2 -translate-x-1/2 z-20 bg-slate-950/80 backdrop-blur-md px-6 py-2 rounded-full border border-white/10 text-sm font-medium text-slate-300 shadow-lg pointer-events-none"
-                : "absolute bottom-4 left-1/2 -translate-x-1/2 z-20 bg-white/90 backdrop-blur-md px-6 py-2 rounded-full border border-gray-200 text-sm font-medium text-gray-700 shadow-lg pointer-events-none"
-              }>
-                {selectedIdx !== null 
-                  ? `Selected: ${items[selectedIdx].name}` 
-                  : (hoveredItem ? `Hovering: ${hoveredItem}` : 'Select an object to edit')}
-              </div>
-              
-              <canvas ref={canvasRef} className="w-full h-full cursor-grab active:cursor-grabbing" />
+      {view === 'upload' && (
+        <div className="flex-1 flex items-center justify-center p-8">
+          <div className="bg-white rounded-2xl shadow-2xl p-8 max-w-2xl w-full">
+            <div className="text-center mb-8">
+              <h2 className="text-3xl font-bold text-gray-800 mb-3">Upload Your Room</h2>
+              <p className="text-gray-600">
+                Upload a photo of your room and AI will identify all furniture to create an interactive 3D model
+              </p>
             </div>
 
-            {/* Bottom Item List */}
-            <div className={isDarkMode
-              ? "bg-slate-950/80 backdrop-blur-xl border-t border-white/10 p-6 z-20"
-              : "bg-white p-4 border-t shadow-lg z-20"
-            }>
-              <div className="max-w-6xl mx-auto flex flex-wrap gap-3 justify-center">
-                {items.map((item, idx) => {
-                  const colorHex = item.color || 'AAAAAA';
-                  const textColor = isDarkMode ? '#FFFFFF' : getContrastColor(colorHex);
-                  const isSelected = selectedIdx === idx;
-                  
-                  return isDarkMode ? (
-                    <button 
-                      key={idx}
-                      onClick={() => handleStaticLabelClick(idx)}
-                      className={`px-4 py-2 rounded-lg text-sm font-medium transition-all border flex items-center gap-2
-                        ${isSelected ? 'bg-purple-500/20 border-purple-500 text-purple-200' : 'bg-slate-800/50 border-white/5 text-slate-300 hover:bg-slate-800'}`}
+            <div className="space-y-6">
+              {showApiInput && (
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    Gemini API Key
+                  </label>
+                  <input
+                    type="password"
+                    value={apiKey}
+                    onChange={(e) => setApiKey(e.target.value)}
+                    placeholder="Enter your Gemini API key"
+                    className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                  />
+                  <p className="mt-2 text-xs text-gray-500">
+                    Get your API key from{' '}
+                    <a
+                      href="https://aistudio.google.com/app/apikey"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-blue-600 hover:underline"
                     >
-                      <div className="w-2 h-2 rounded-full" style={{ backgroundColor: `#${colorHex}` }} />
-                      {item.name}
-                    </button>
-                  ) : (
-                    <div 
-                      key={idx}
-                      onClick={() => handleStaticLabelClick(idx)}
-                      className={`px-4 py-2 rounded-full text-sm font-bold cursor-pointer transition-all duration-200 border-2 ${isSelected ? 'ring-2 ring-blue-500 scale-105 shadow-md' : 'border-transparent hover:scale-105'}`}
-                      style={{ 
-                        backgroundColor: `#${colorHex}`, 
-                        color: textColor,
-                        borderColor: isSelected ? '#3b82f6' : 'transparent',
-                        boxShadow: '0 2px 4px rgba(0,0,0,0.1)'
-                      }}
-                    >
-                      {item.name}
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* Modals */}
-        {showLayoutModal && (
-          <div className={isDarkMode
-            ? "fixed inset-0 bg-slate-950/80 backdrop-blur-sm flex items-center justify-center z-50 p-4"
-            : "fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4"
-          }>
-            <div className={isDarkMode
-              ? "bg-slate-900 border border-white/10 rounded-3xl shadow-2xl max-w-2xl w-full p-8 relative"
-              : "bg-white rounded-2xl shadow-2xl max-w-2xl w-full p-8"
-            }>
-              <div className="flex justify-between items-center mb-6">
-                <h2 className={isDarkMode 
-                  ? "text-2xl font-bold text-white flex items-center gap-3"
-                  : "text-2xl font-bold text-gray-800 flex items-center gap-2"
-                }>
-                  <Wand2 className={isDarkMode ? "text-purple-400" : "text-purple-600"} size={28} />
-                  AI Layout {isDarkMode ? "Studio" : "Optimization"}
-                </h2>
-                <button
-                  onClick={() => setShowLayoutModal(false)}
-                  className={isDarkMode ? "text-slate-400 hover:text-white" : "text-gray-500 hover:text-gray-700"}
-                >
-                  <X size={24} />
-                </button>
-              </div>
-              <textarea
-                value={layoutPrompt}
-                onChange={(e) => setLayoutPrompt(e.target.value)}
-                placeholder="Describe your dream layout..."
-                className={isDarkMode
-                  ? "w-full px-4 py-3 bg-slate-950 border border-slate-700 rounded-xl focus:ring-2 focus:ring-purple-500 text-white h-32 mb-4"
-                  : "w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent h-32 mb-4"
-                }
-                rows={4}
-              />
-              {!isDarkMode && (
-                <div className="bg-purple-50 rounded-lg p-4 mb-4">
-                  <h3 className="font-semibold text-purple-900 mb-2">Examples:</h3>
-                  <ul className="text-sm text-purple-800 space-y-1">
-                    <li>• More aesthetic and visually balanced</li>
-                    <li>• Maximize usable floor space</li>
-                    <li>• Functional grouping for work and relaxation</li>
-                  </ul>
+                      Google AI Studio
+                    </a>
+                  </p>
                 </div>
               )}
-              <button 
-                onClick={optimizeLayout} 
-                disabled={layoutLoading} 
-                className={isDarkMode
-                  ? "w-full py-3 bg-purple-600 text-white rounded-xl font-bold hover:bg-purple-700 disabled:opacity-50 flex items-center justify-center"
-                  : "w-full py-3 bg-gradient-to-r from-purple-500 to-purple-700 text-white rounded-lg font-semibold hover:from-purple-600 hover:to-purple-800 transition disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
-                }
+
+              <label className="block">
+                <div className="border-3 border-dashed border-blue-300 rounded-xl p-12 text-center cursor-pointer hover:border-blue-500 hover:bg-blue-50 transition">
+                  <Upload className="mx-auto mb-4 text-blue-500" size={48} />
+                  <p className="text-lg font-semibold text-gray-700 mb-2">Click to upload up to 5 room images</p>
+                  <p className="text-sm text-gray-500">PNG, JPG up to 10MB</p>
+                  <input type="file" accept="image/*" multiple onChange={handleImageUpload} className="hidden" />
+                </div>
+              </label>
+
+              {images.length > 0 && (
+                <div className="space-y-4">
+                  <div className="relative overflow-hidden rounded-lg shadow-lg bg-gray-50 border border-gray-200">
+                    <div className="grid grid-cols-2 md:grid-cols-3 gap-2 p-2">
+                      {images.map((img, idx) => (
+                        <div key={idx} className="relative group aspect-square">
+                          <img 
+                            src={img} 
+                            alt={`Room view ${idx + 1}`} 
+                            className="w-full h-full object-cover rounded-lg" 
+                          />
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+
+                  <button
+                    onClick={analyzeRoom}
+                    disabled={loading || !apiKey}
+                    className="w-full py-4 bg-gradient-to-r from-blue-500 to-indigo-600 text-white rounded-lg font-semibold text-lg hover:from-blue-600 hover:to-indigo-700 transition disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-3"
+                  >
+                    {loading ? (
+                      <>
+                        <Loader2 className="animate-spin" size={24} />
+                        Processing {images.length} View{images.length > 1 ? 's' : ''}...
+                      </>
+                    ) : (
+                      <>
+                        <Eye size={24} />
+                        Analyze & Create 3D Room
+                      </>
+                    )}
+                  </button>
+                  
+                  {/* Clear Button */}
+                  <button onClick={() => setImages([])} disabled={loading} className="w-full py-2 text-gray-500 hover:text-red-500 text-sm font-medium transition">
+                    Clear Images
+                  </button>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {view === 'ar' && (
+        <div className="flex-1 flex flex-col">
+          <div className="bg-blue-500 text-white p-4">
+            <div className="flex items-center justify-center gap-2 mb-2">
+              <Move size={20} />
+              <span className="font-semibold">Interactive 3D Room</span>
+            </div>
+            <div className="flex items-center justify-center gap-6 text-sm text-blue-100">
+              <div className="flex items-center gap-1"><Move size={16} /><span>Left-click & drag to move</span></div>
+              <div className="flex items-center gap-1"><RotateCw size={16} /><span>Right-click & drag to rotate</span></div>
+              <div className="flex items-center gap-1"><ZoomIn size={16} /><span>Scroll to zoom</span></div>
+            </div>
+            
+            <p className="text-center mt-2 text-blue-100 font-medium h-6 transition-all duration-200">
+              {selectedIdx !== null 
+                ? `Selected: ${items[selectedIdx].name}` 
+                : (hoveredItem ? `Hovering: ${hoveredItem}` : 'Select an object to edit')}
+            </p>
+          </div>
+          
+          <div className="flex-1 relative">
+            <canvas ref={canvasRef} className="w-full h-full cursor-grab active:cursor-grabbing" />
+          </div>
+          <div className="bg-white p-4 border-t">
+            <div className="flex flex-wrap gap-2 justify-center">
+              {items.map((item, idx) => {
+                const colorHex = item.color || 'AAAAAA';
+                const textColor = getContrastColor(colorHex);
+                const isSelected = selectedIdx === idx;
+                
+                return (
+                  <div 
+                    key={idx}
+                    onClick={() => handleStaticLabelClick(idx)}
+                    className={`px-4 py-2 rounded-full text-sm font-bold cursor-pointer transition-all duration-200 border-2 ${isSelected ? 'ring-2 ring-blue-500 scale-105 shadow-md' : 'border-transparent hover:scale-105'}`}
+                    style={{ 
+                      backgroundColor: `#${colorHex}`, 
+                      color: textColor,
+                      borderColor: isSelected ? '#3b82f6' : 'transparent',
+                      boxShadow: '0 2px 4px rgba(0,0,0,0.1)'
+                    }}
+                  >
+                    {item.name}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showLayoutModal && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-2xl shadow-2xl max-w-2xl w-full p-8">
+            <div className="flex justify-between items-center mb-6">
+              <h2 className="text-2xl font-bold text-gray-800 flex items-center gap-2">
+                <Sparkles className="text-purple-600" size={28} />
+                AI Layout Optimization
+              </h2>
+              <button
+                onClick={() => setShowLayoutModal(false)}
+                className="text-gray-500 hover:text-gray-700"
               >
-                {layoutLoading ? <Loader2 className="animate-spin mx-auto" size={20} /> : <><Sparkles size={20} /> Optimize Layout</>}
+                <X size={24} />
+              </button>
+            </div>
+
+            <div className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  What kind of layout would you like?
+                </label>
+                <textarea
+                  value={layoutPrompt}
+                  onChange={(e) => setLayoutPrompt(e.target.value)}
+                  placeholder="E.g., 'Make it more aesthetic and spacious', 'Arrange for better conversation flow', 'Maximize floor space', 'Create distinct zones for working and relaxing'"
+                  className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent"
+                  rows={4}
+                />
+              </div>
+
+              <div className="bg-purple-50 rounded-lg p-4">
+                <h3 className="font-semibold text-purple-900 mb-2">Examples:</h3>
+                <ul className="text-sm text-purple-800 space-y-1">
+                  <li>• More aesthetic and visually balanced</li>
+                  <li>• Maximize usable floor space</li>
+                  <li>• Functional grouping for work and relaxation</li>
+                  <li>• Better conversation and social interaction</li>
+                  <li>• Feng shui principles</li>
+                </ul>
+              </div>
+
+              <button
+                onClick={optimizeLayout}
+                disabled={layoutLoading || !layoutPrompt.trim()}
+                className="w-full py-3 bg-gradient-to-r from-purple-500 to-purple-700 text-white rounded-lg font-semibold hover:from-purple-600 hover:to-purple-800 transition disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+              >
+                {layoutLoading ? (
+                  <>
+                    <Loader2 className="animate-spin" size={20} />
+                    Optimizing Layout...
+                  </>
+                ) : (
+                  <>
+                    <Sparkles size={20} />
+                    Optimize Layout
+                  </>
+                )}
               </button>
             </div>
           </div>
-        )}
+        </div>
+      )}
 
-        {showFurnitureModal && (
-          <div className={isDarkMode
-            ? "fixed inset-0 bg-slate-950/80 backdrop-blur-sm flex items-center justify-center z-50 p-4"
-            : "fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4"
-          }>
-            <div className={isDarkMode
-              ? "bg-slate-900 border border-white/10 rounded-3xl shadow-2xl max-w-4xl w-full p-8 max-h-[85vh] overflow-y-auto"
-              : "bg-white rounded-2xl shadow-2xl max-w-4xl w-full p-8 max-h-screen overflow-y-auto"
-            }>
-              <div className="flex justify-between items-center mb-6">
-                <h2 className={isDarkMode
-                  ? "text-2xl font-bold text-white flex items-center gap-3"
-                  : "text-2xl font-bold text-gray-800 flex items-center gap-2"
-                }>
-                  <Armchair className={isDarkMode ? "text-emerald-400" : "text-green-600"} size={28} />
-                  Furniture {isDarkMode ? "Scout" : "Finder"}
-                </h2>
-                <button
-                  onClick={() => {setShowFurnitureModal(false); setFurnitureResults([]);}}
-                  className={isDarkMode ? "text-slate-400 hover:text-white" : "text-gray-500 hover:text-gray-700"}
-                >
-                  <X size={24} />
-                </button>
-              </div>
-              <div className={isDarkMode ? "grid grid-cols-1 md:grid-cols-3 gap-4 mb-6" : "space-y-4 mb-6"}>
-                <input 
-                  value={furnitureType} 
-                  onChange={e=>setFurnitureType(e.target.value)} 
-                  placeholder={isDarkMode ? "Item Name" : "E.g., 'modern coffee table', 'ergonomic office chair'"} 
-                  className={isDarkMode
-                    ? "bg-slate-950 border border-slate-700 text-white rounded-xl px-4 py-3 md:col-span-3"
-                    : "w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent"
-                  }
+      {/* Furniture Finder Modal */}
+      {showFurnitureModal && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-2xl shadow-2xl max-w-4xl w-full p-8 max-h-screen overflow-y-auto">
+            <div className="flex justify-between items-center mb-6">
+              <h2 className="text-2xl font-bold text-gray-800 flex items-center gap-2">
+                <Search className="text-green-600" size={28} />
+                Find Furniture
+              </h2>
+              <button
+                onClick={() => {
+                  setShowFurnitureModal(false);
+                  setFurnitureResults([]);
+                }}
+                className="text-gray-500 hover:text-gray-700"
+              >
+                <X size={24} />
+              </button>
+            </div>
+
+            <div className="space-y-4 mb-6">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  What furniture are you looking for?
+                </label>
+                <input
+                  type="text"
+                  value={furnitureType}
+                  onChange={(e) => setFurnitureType(e.target.value)}
+                  placeholder="E.g., 'modern coffee table', 'ergonomic office chair', 'velvet sofa'"
+                  className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent"
                 />
-                {!isDarkMode && (
-                  <div className="grid grid-cols-2 gap-4">
-                    <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-2 flex items-center gap-1">
-                        <DollarSign size={16} /> Price Range (Optional)
-                      </label>
-                      <input
-                        value={priceRange}
-                        onChange={e=>setPriceRange(e.target.value)}
-                        placeholder="E.g., '$100-$300', 'under $500'"
-                        className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent"
-                      />
-                    </div>
-                    <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-2 flex items-center gap-1">
-                        <MapPin size={16} /> Location (Optional)
-                      </label>
-                      <input
-                        value={userLocation}
-                        onChange={e=>setUserLocation(e.target.value)}
-                        placeholder="E.g., 'New York', 'Toronto'"
-                        className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent"
-                      />
-                    </div>
-                  </div>
-                )}
-                {isDarkMode && (
+              </div>
+
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2 flex items-center gap-1">
+                    <DollarSign size={16} />
+                    Price Range (Optional)
+                  </label>
+                  <input
+                    type="text"
+                    value={priceRange}
+                    onChange={(e) => setPriceRange(e.target.value)}
+                    placeholder="E.g., '$100-$300', 'under $500', 'budget-friendly'"
+                    className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2 flex items-center gap-1">
+                    <MapPin size={16} />
+                    Location (Optional)
+                  </label>
+                  <input
+                    type="text"
+                    value={userLocation}
+                    onChange={(e) => setUserLocation(e.target.value)}
+                    placeholder="E.g., 'New York', 'Los Angeles', 'Toronto'"
+                    className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent"
+                  />
+                </div>
+              </div>
+
+              <button
+                onClick={findFurniture}
+                disabled={furnitureLoading || !furnitureType.trim()}
+                className="w-full py-3 bg-gradient-to-r from-green-500 to-green-700 text-white rounded-lg font-semibold hover:from-green-600 hover:to-green-800 transition disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+              >
+                {furnitureLoading ? (
                   <>
-                    <input value={priceRange} onChange={e=>setPriceRange(e.target.value)} placeholder="Budget" className="bg-slate-950 border border-slate-700 text-white rounded-xl px-4 py-3"/>
-                    <input value={userLocation} onChange={e=>setUserLocation(e.target.value)} placeholder="Location" className="bg-slate-950 border border-slate-700 text-white rounded-xl px-4 py-3"/>
+                    <Loader2 className="animate-spin" size={20} />
+                    Searching...
+                  </>
+                ) : (
+                  <>
+                    <Search size={20} />
+                    Search Furniture
                   </>
                 )}
-                <button 
-                  onClick={findFurniture} 
-                  disabled={furnitureLoading} 
-                  className={isDarkMode
-                    ? "bg-emerald-600 text-white rounded-xl font-bold hover:bg-emerald-700 flex items-center justify-center"
-                    : "w-full py-3 bg-gradient-to-r from-green-500 to-green-700 text-white rounded-lg font-semibold hover:from-green-600 hover:to-green-800 transition disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2 col-span-2"
-                  }
-                >
-                  {furnitureLoading ? <Loader2 className="animate-spin mx-auto" size={20}/> : <><Search size={20}/> {isDarkMode ? 'Find' : 'Search Furniture'}</>}
-                </button>
-              </div>
-              {furnitureResults.length > 0 && (
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  {furnitureResults.map((item, idx) => (
-                    <div 
-                      key={idx} 
-                      className={isDarkMode
-                        ? "bg-slate-800/50 border border-white/5 rounded-2xl p-5 hover:bg-slate-800 transition-all"
-                        : "bg-green-50 rounded-lg p-4 border border-green-200"
-                      }
-                    >
-                      <div className="flex justify-between mb-2">
-                        <h4 className={isDarkMode ? "font-bold text-white" : "font-semibold text-gray-900"}>{item.name}</h4>
-                        <span className={isDarkMode ? "text-emerald-400 font-bold" : "text-green-700 font-bold"}>{item.price}</span>
-                      </div>
-                      <p className={isDarkMode ? "text-sm text-slate-400 mb-2" : "text-sm text-gray-600 mb-2"}>
-                        <strong>Store:</strong> {item.store}
-                      </p>
-                      <p className={isDarkMode ? "text-sm text-slate-300 border-t border-white/5 pt-2" : "text-sm text-gray-700 mb-3"}>{item.features}</p>
-                      <div className="flex gap-2">
+              </button>
+            </div>
+
+            {furnitureResults.length > 0 && (
+              <div className="space-y-4">
+                <h3 className="text-xl font-bold text-gray-800">Recommendations</h3>
+                {furnitureResults.map((item, idx) => (
+                  <div key={idx} className="bg-green-50 rounded-lg p-4 border border-green-200">
+                    <div className="flex justify-between items-start mb-2">
+                      <h4 className="font-semibold text-gray-900">{item.name}</h4>
+                      <span className="text-green-700 font-bold">{item.price}</span>
+                    </div>
+                    <p className="text-sm text-gray-600 mb-2">
+                      <strong>Store:</strong> {item.store}
+                    </p>
+                    <p className="text-sm text-gray-700 mb-3">{item.features}</p>
+                    <div className="flex gap-2">
                       {item.url && (
                         <a
                           href={item.url}
@@ -1356,21 +1229,21 @@ export default function RoomRedesigner() {
                         </a>
                       )}
                       <button
-                        onClick={() => addFurnitureToRoom(item)}
-                        className="inline-flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 transition"
+                        onClick={() => addFurnitureToRoom(item, idx)}
+                        disabled={addingToRoom === idx}
+                        className={`inline-flex items-center gap-2 px-4 py-2 text-white rounded-lg text-sm font-medium transition ${addingToRoom === idx ? 'bg-blue-400 cursor-wait' : 'bg-blue-600 hover:bg-blue-700'}`}
                       >
-                        <Eye size={16} />
-                        Add to Room
+                        {addingToRoom === idx ? <Loader2 size={16} className="animate-spin" /> : <Eye size={16} />}
+                        {addingToRoom === idx ? 'Generating 3D Model...' : 'Add to Room'}
                       </button>
                     </div>
                   </div>
-                  ))}
-                </div>
-              )}
-            </div>
+                ))}
+              </div>
+            )}
           </div>
-        )}
-      </div>
+        </div>
+      )}
     </div>
   );
 }
