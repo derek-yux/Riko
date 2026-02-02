@@ -41,6 +41,7 @@ export default function RoomRedesigner() {
   const [addingToRoom, setAddingToRoom] = useState(null);
   const [isDarkMode, setIsDarkMode] = useState(true); // Changed to true for default dark mode
   const [isFirstPerson, setIsFirstPerson] = useState(false);
+  const [showWASDPopup, setShowWASDPopup] = useState(false);
   
   const canvasRef = useRef(null);
   const sceneRef = useRef(null);
@@ -56,6 +57,7 @@ export default function RoomRedesigner() {
   const dragPlaneRef = useRef(null);
   const lastMouseRef = useRef({ x: 0, y: 0 });
   const targetRef = useRef(new THREE.Vector3(0, 0, 0));
+  const keysPressed = useRef({ w: false, a: false, s: false, d: false });
 
   useEffect(() => {
     let interval;
@@ -71,6 +73,17 @@ export default function RoomRedesigner() {
     }
     return () => clearInterval(interval);
   }, [loading]);
+
+  // Show WASD popup when entering first person mode
+  useEffect(() => {
+    if (isFirstPerson) {
+      setShowWASDPopup(true);
+      const timer = setTimeout(() => {
+        setShowWASDPopup(false);
+      }, 3000);
+      return () => clearTimeout(timer);
+    }
+  }, [isFirstPerson]);
 
   const getContrastColor = (hex) => {
     const r = parseInt(hex.substr(0, 2), 16);
@@ -851,14 +864,80 @@ export default function RoomRedesigner() {
       e.preventDefault();
     };
 
+    // Keyboard controls for first-person movement
+    const handleKeyDown = (e) => {
+      if (!isFirstPerson) return;
+      
+      const key = e.key.toLowerCase();
+      if (['w', 'a', 's', 'd'].includes(key)) {
+        keysPressed.current[key] = true;
+      }
+    };
+
+    const handleKeyUp = (e) => {
+      if (!isFirstPerson) return;
+      
+      const key = e.key.toLowerCase();
+      if (['w', 'a', 's', 'd'].includes(key)) {
+        keysPressed.current[key] = false;
+      }
+    };
+
+    // Movement update function
+    const updateMovement = () => {
+      if (!isFirstPerson || !cameraRef.current) return;
+
+      const moveSpeed = 0.1;
+      const camera = cameraRef.current;
+      
+      // Get camera direction
+      const direction = new THREE.Vector3();
+      camera.getWorldDirection(direction);
+      direction.y = 0; // Keep movement on horizontal plane
+      direction.normalize();
+      
+      // Get right vector (perpendicular to direction)
+      const right = new THREE.Vector3();
+      right.crossVectors(direction, new THREE.Vector3(0, 1, 0)).normalize();
+      
+      // Apply movement based on pressed keys
+      if (keysPressed.current.w) {
+        camera.position.addScaledVector(direction, moveSpeed);
+      }
+      if (keysPressed.current.s) {
+        camera.position.addScaledVector(direction, -moveSpeed);
+      }
+      if (keysPressed.current.a) {
+        camera.position.addScaledVector(right, -moveSpeed);
+      }
+      if (keysPressed.current.d) {
+        camera.position.addScaledVector(right, moveSpeed);
+      }
+      
+      // Maintain eye level
+      camera.position.y = 1.6;
+      
+      // Optional: Keep camera within bounds
+      const maxDistance = 8;
+      const distance = Math.sqrt(camera.position.x ** 2 + camera.position.z ** 2);
+      if (distance > maxDistance) {
+        const ratio = maxDistance / distance;
+        camera.position.x *= ratio;
+        camera.position.z *= ratio;
+      }
+    };
+
     canvasRef.current.addEventListener('mousedown', handleMouseDown);
     canvasRef.current.addEventListener('mousemove', handleMouseMove);
     canvasRef.current.addEventListener('mouseup', handleMouseUp);
     canvasRef.current.addEventListener('wheel', handleWheel);
     canvasRef.current.addEventListener('contextmenu', handleContextMenu);
+    window.addEventListener('keydown', handleKeyDown);
+    window.addEventListener('keyup', handleKeyUp);
 
     const animate = () => {
       requestAnimationFrame(animate);
+      updateMovement();
       renderer.render(scene, camera);
     };
     animate();
@@ -871,6 +950,8 @@ export default function RoomRedesigner() {
         canvasRef.current.removeEventListener('wheel', handleWheel);
         canvasRef.current.removeEventListener('contextmenu', handleContextMenu);
       }
+      window.removeEventListener('keydown', handleKeyDown);
+      window.removeEventListener('keyup', handleKeyUp);
       renderer.dispose();
     };
   }, [view, items, isDarkMode, isFirstPerson]);
@@ -1118,6 +1199,34 @@ export default function RoomRedesigner() {
                 </span>
               </div>
               
+              {/* WASD Popup - Fades away after 3 seconds */}
+              {showWASDPopup && (
+                <div 
+                  className={`absolute top-20 left-1/2 -translate-x-1/2 z-30 px-8 py-4 rounded-2xl border shadow-2xl text-center transition-opacity duration-1000 ${
+                    isDarkMode 
+                      ? 'bg-gradient-to-br from-blue-600 to-purple-600 border-white/20 text-white'
+                      : 'bg-white border-blue-300 text-gray-800'
+                  }`}
+                  style={{ 
+                    animation: 'fadeInOut 3s ease-in-out',
+                  }}
+                >
+                  <div className="flex items-center gap-3 mb-2">
+                    <div className={`p-2 rounded-lg ${isDarkMode ? 'bg-white/20' : 'bg-blue-100'}`}>
+                      <User size={20} className={isDarkMode ? 'text-white' : 'text-blue-600'} />
+                    </div>
+                    <span className="font-bold text-lg">First-Person Mode Activated!</span>
+                  </div>
+                  <p className={`text-sm ${isDarkMode ? 'text-blue-100' : 'text-gray-600'}`}>
+                    Use <kbd className={`px-2 py-1 rounded ${isDarkMode ? 'bg-white/20' : 'bg-gray-200'} font-mono font-bold mx-1`}>W</kbd>
+                    <kbd className={`px-2 py-1 rounded ${isDarkMode ? 'bg-white/20' : 'bg-gray-200'} font-mono font-bold mx-1`}>A</kbd>
+                    <kbd className={`px-2 py-1 rounded ${isDarkMode ? 'bg-white/20' : 'bg-gray-200'} font-mono font-bold mx-1`}>S</kbd>
+                    <kbd className={`px-2 py-1 rounded ${isDarkMode ? 'bg-white/20' : 'bg-gray-200'} font-mono font-bold mx-1`}>D</kbd>
+                    keys to move around
+                  </p>
+                </div>
+              )}
+              
               {/* Status Message */}
               <div className={isDarkMode
                 ? "absolute bottom-4 left-1/2 -translate-x-1/2 z-20 bg-slate-950/80 backdrop-blur-md px-6 py-2 rounded-full border border-white/10 text-sm font-medium text-slate-300 shadow-lg pointer-events-none"
@@ -1362,6 +1471,16 @@ export default function RoomRedesigner() {
           </div>
         )}
       </div>
+
+      {/* CSS Animation for WASD Popup */}
+      <style>{`
+        @keyframes fadeInOut {
+          0% { opacity: 0; transform: translateX(-50%) translateY(-20px); }
+          10% { opacity: 1; transform: translateX(-50%) translateY(0); }
+          70% { opacity: 1; transform: translateX(-50%) translateY(0); }
+          100% { opacity: 0; transform: translateX(-50%) translateY(-20px); }
+        }
+      `}</style>
     </div>
   );
 }
