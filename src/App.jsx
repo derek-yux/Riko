@@ -85,10 +85,21 @@ export default function RoomRedesigner() {
     }
   }, [isFirstPerson]);
 
+  const sanitizeHex = (hex) => {
+    if (!hex || typeof hex !== 'string') return 'AAAAAA';
+    let clean = hex.replace(/^(#|0x)/i, '').trim();
+    if (/^[0-9a-f]{3}$/i.test(clean)) {
+      clean = clean[0] + clean[0] + clean[1] + clean[1] + clean[2] + clean[2];
+    }
+    if (/^[0-9a-f]{6}$/i.test(clean)) return clean;
+    return 'AAAAAA';
+  };
+
   const getContrastColor = (hex) => {
-    const r = parseInt(hex.substr(0, 2), 16);
-    const g = parseInt(hex.substr(2, 2), 16);
-    const b = parseInt(hex.substr(4, 2), 16);
+    const clean = sanitizeHex(hex);
+    const r = parseInt(clean.substr(0, 2), 16);
+    const g = parseInt(clean.substr(2, 2), 16);
+    const b = parseInt(clean.substr(4, 2), 16);
     const yiq = ((r * 299) + (g * 587) + (b * 114)) / 1000;
     return (yiq >= 128) ? '#000000' : '#FFFFFF';
   };
@@ -180,10 +191,10 @@ export default function RoomRedesigner() {
     
     components.forEach(comp => {
       const geometry = createGeometry(comp.geometry);
-      const color = comp.color ? parseInt(comp.color, 16) : baseColor;
-      const material = new THREE.MeshStandardMaterial({ 
+      const color = comp.color ? parseInt(sanitizeHex(comp.color), 16) : baseColor;
+      const material = new THREE.MeshStandardMaterial({
         color,
-        emissive: comp.emissive ? parseInt(comp.emissive, 16) : 0x000000,
+        emissive: comp.emissive ? parseInt(sanitizeHex(comp.emissive), 16) : 0x000000,
         emissiveIntensity: comp.emissiveIntensity || 0
       });
       const mesh = new THREE.Mesh(geometry, material);
@@ -292,13 +303,13 @@ export default function RoomRedesigner() {
                 - name: descriptive name of the object (e.g., "north wall", "wooden chair", "ceiling lamp")
                 - x: horizontal position (0-10)
                 - z: depth position (0-10)
-                - color: hex color code (e.g., "8B4513" for brown, "F5F5DC" for beige walls)
+                - color: hex color code WITHOUT # prefix (e.g., "8B4513" for brown, "F5F5DC" for beige walls)
                 - components: array of geometric shapes that make up the object, where each component has:
                   - geometry: { type: "box"|"cylinder"|"sphere"|"cone"|"plane", params: {dimensions} }
                   - position: { x, y, z } relative to object center
                   - rotation: { x, y, z } in radians (optional)
-                  - color: hex color (optional, overrides base color)
-                  - emissive: hex color for glowing parts (optional)
+                  - color: hex color WITHOUT # prefix (optional, overrides base color)
+                  - emissive: hex color WITHOUT # prefix for glowing parts (optional)
                   - emissiveIntensity: 0-1 (optional)
 
                 Example for a wall:
@@ -501,7 +512,7 @@ export default function RoomRedesigner() {
             google_search: {}
           }],
           generationConfig: {
-            temperature: 0.4,
+            temperature: 0.2,
             topK: 40,
             topP: 0.95,
             maxOutputTokens: 8192
@@ -561,13 +572,13 @@ export default function RoomRedesigner() {
               - name: "${furnitureItem.name}"
               - x: 5
               - z: 5
-              - color: hex color code matching the furniture
+              - color: hex color code WITHOUT # prefix matching the furniture (e.g., "8B4513")
               - components: array of geometric shapes that make up the object, where each component has:
                 - geometry: { type: "box"|"cylinder"|"sphere"|"cone"|"plane", params: {dimensions} }
                 - position: { x, y, z } relative to object center (y=0 is the floor)
                 - rotation: { x, y, z } in radians (optional)
-                - color: hex color (optional, overrides base color)
-                - emissive: hex color for glowing parts (optional)
+                - color: hex color WITHOUT # prefix (optional, overrides base color)
+                - emissive: hex color WITHOUT # prefix for glowing parts (optional)
                 - emissiveIntensity: 0-1 (optional)
 
               Use realistic proportions and multiple components to capture the shape. For example a chair should have a seat, backrest, and 4 legs as separate components. Use real-world dimensions in meters.
@@ -696,7 +707,7 @@ export default function RoomRedesigner() {
     labelsRef.current = [];
     
     items.forEach((item, idx) => {
-      const baseColor = parseInt(item.color || 'AAAAAA', 16);
+      const baseColor = parseInt(sanitizeHex(item.color), 16);
       const furniture = createObjectFromComponents(item.components || [], baseColor);
       furniture.position.set(item.x - 5, 0, item.z - 5);
       furniture.userData = { name: item.name, id: idx, originalColor: baseColor, isFurniture: true };
@@ -1247,7 +1258,7 @@ export default function RoomRedesigner() {
             }>
               <div className="max-w-6xl mx-auto flex flex-wrap gap-3 justify-center">
                 {items.map((item, idx) => {
-                  const colorHex = item.color || 'AAAAAA';
+                  const colorHex = sanitizeHex(item.color);
                   const textColor = isDarkMode ? '#FFFFFF' : getContrastColor(colorHex);
                   const isSelected = selectedIdx === idx;
                   
