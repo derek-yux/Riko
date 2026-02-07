@@ -58,6 +58,7 @@ export default function RoomRedesigner() {
   const lastMouseRef = useRef({ x: 0, y: 0 });
   const targetRef = useRef(new THREE.Vector3(0, 0, 0));
   const keysPressed = useRef({ w: false, a: false, s: false, d: false });
+  const wallBoundsRef = useRef({ minX: -5, maxX: 5, minZ: -5, maxZ: 5 });
 
   useEffect(() => {
     let interval;
@@ -653,17 +654,6 @@ export default function RoomRedesigner() {
     sceneRef.current = scene;
 
     const camera = new THREE.PerspectiveCamera(75, canvasRef.current.clientWidth / canvasRef.current.clientHeight, 0.1, 1000);
-    
-    // Initial Camera Position based on View Mode
-    if (isFirstPerson) {
-      camera.position.set(0, 1.6, 4);
-      targetRef.current.set(0, 1.6, 0);
-    } else {
-      camera.position.set(0, 8, 12);
-      targetRef.current.set(0, 0, 0);
-    }
-    
-    camera.lookAt(targetRef.current);
     cameraRef.current = camera;
 
     const renderer = new THREE.WebGLRenderer({ 
@@ -716,6 +706,32 @@ export default function RoomRedesigner() {
     objectsRef.current = [];
     labelsRef.current = [];
     
+    // Calculate room bounds from items (for camera positioning)
+    let roomMinX = Infinity, roomMaxX = -Infinity;
+    let roomMinZ = Infinity, roomMaxZ = -Infinity;
+    
+    items.forEach((item) => {
+      const x = item.x - 5;
+      const z = item.z - 5;
+      roomMinX = Math.min(roomMinX, x - 2);
+      roomMaxX = Math.max(roomMaxX, x + 2);
+      roomMinZ = Math.min(roomMinZ, z - 2);
+      roomMaxZ = Math.max(roomMaxZ, z + 2);
+    });
+    
+    // Default room bounds if no items
+    if (!isFinite(roomMinX)) {
+      roomMinX = -5;
+      roomMaxX = 5;
+      roomMinZ = -5;
+      roomMaxZ = 5;
+    }
+    
+    const roomCenterX = (roomMinX + roomMaxX) / 2;
+    const roomCenterZ = (roomMinZ + roomMaxZ) / 2;
+    const roomRadius = Math.max(roomMaxX - roomMinX, roomMaxZ - roomMinZ) / 2;
+    const roomBounds = { minX: roomMinX, maxX: roomMaxX, minZ: roomMinZ, maxZ: roomMaxZ, centerX: roomCenterX, centerZ: roomCenterZ, radius: roomRadius };
+    
     items.forEach((item, idx) => {
       const baseColor = parseInt(sanitizeHex(item.color), 16);
       const isArchitectural = isArchitecturalFeature(item.name);
@@ -733,6 +749,46 @@ export default function RoomRedesigner() {
       scene.add(furniture);
       objectsRef.current.push(furniture);
     });
+    
+    // Calculate wall bounds from architectural features only
+    let wallMinX = Infinity, wallMaxX = -Infinity;
+    let wallMinZ = Infinity, wallMaxZ = -Infinity;
+    let hasWalls = false;
+    
+    objectsRef.current.forEach((obj) => {
+      if (obj.userData.isArchitectural) {
+        hasWalls = true;
+        const box = new THREE.Box3().setFromObject(obj);
+        wallMinX = Math.min(wallMinX, box.min.x);
+        wallMaxX = Math.max(wallMaxX, box.max.x);
+        wallMinZ = Math.min(wallMinZ, box.min.z);
+        wallMaxZ = Math.max(wallMaxZ, box.max.z);
+      }
+    });
+    
+    // If we have walls, use them for boundary detection; otherwise use room bounds
+    if (hasWalls) {
+      wallBoundsRef.current = { minX: wallMinX, maxX: wallMaxX, minZ: wallMinZ, maxZ: wallMaxZ };
+    } else {
+      wallBoundsRef.current = roomBounds;
+    }
+
+    // Set camera position based on view mode and actual room bounds
+    if (isFirstPerson) {
+      camera.position.set(roomBounds.centerX, 1.6, roomBounds.centerZ);
+      targetRef.current.set(roomBounds.centerX, 1.6, roomBounds.centerZ);
+    } else {
+      // Orbit view: position camera high above room at angle, looking down at center
+      const orbitDistance = roomBounds.radius * 2.5;
+      const orbitHeight = roomBounds.radius * 2;
+      camera.position.set(
+        roomBounds.centerX + orbitDistance * 0.7071, 
+        orbitHeight, 
+        roomBounds.centerZ + orbitDistance * 0.7071
+      );
+      targetRef.current.set(roomBounds.centerX, roomBounds.radius * 0.3, roomBounds.centerZ);
+    }
+    camera.lookAt(targetRef.current);
 
     const handleMouseDown = (e) => {
       if (e.button === 2 || e.ctrlKey) {
@@ -806,21 +862,51 @@ export default function RoomRedesigner() {
       }
     };
 
+    // Helper function to calculate Y position based on what's below the object
+    const getYPositionWithGravity = (xPosition, zPosition, draggingObject) => {
+      let highestY = 0; // Floor level
+      
+      // Check all objects to see if any are beneath this position
+      objectsRef.current.forEach((obj) => {
+        // Skip the object being dragged and architectural features
+        if (obj === draggingObject || obj.userData.isArchitectural) {
+          return;
+        }
+        
+        // Get bounding box of the object below
+        const box = new THREE.Box3().setFromObject(obj);
+        
+        // Check if dragged object's X,Z is within this object's X,Z bounds
+        if (xPosition > box.min.x && xPosition < box.max.x &&
+            zPosition > box.min.z && zPosition < box.max.z) {
+          // This object is below, take its top Y position
+          highestY = Math.max(highestY, box.max.y);
+        }
+      });
+      
+      return highestY;
+    };
+
     const handleMouseMove = (e) => {
       if (isRotatingRef.current) {
         const deltaX = e.clientX - lastMouseRef.current.x;
         const deltaY = e.clientY - lastMouseRef.current.y;
         
         const rotationSpeed = 0.005;
-        const radius = Math.sqrt(camera.position.x ** 2 + camera.position.z ** 2);
-        const currentAngle = Math.atan2(camera.position.z, camera.position.x);
+        const dx = camera.position.x - roomBounds.centerX;
+        const dz = camera.position.z - roomBounds.centerZ;
+        const radius = Math.sqrt(dx * dx + dz * dz);
+        const currentAngle = Math.atan2(dz, dx);
         const newAngle = currentAngle - deltaX * rotationSpeed;
         
-        camera.position.x = radius * Math.cos(newAngle);
-        camera.position.z = radius * Math.sin(newAngle);
+        camera.position.x = roomBounds.centerX + radius * Math.cos(newAngle);
+        camera.position.z = roomBounds.centerZ + radius * Math.sin(newAngle);
 
         if (!isFirstPerson) {
-           camera.position.y = Math.max(2, camera.position.y - deltaY * 0.05);
+           const minZoom = roomBounds.radius * 0.5;
+           const maxZoom = roomBounds.radius * 3;
+           const newY = camera.position.y - deltaY * 0.05;
+           camera.position.y = Math.max(minZoom, Math.min(maxZoom, newY));
         } else {
            camera.position.y = 1.6;
         }
@@ -842,17 +928,24 @@ export default function RoomRedesigner() {
         if (intersects.length > 0) {
           const point = intersects[0].point;
           
-          // Constrain position to room boundaries (-5 to 5)
-          const constrainedX = Math.max(-4.8, Math.min(4.8, point.x));
-          const constrainedZ = Math.max(-4.8, Math.min(4.8, point.z));
+          // Constrain position to wall boundaries
+          const wallBounds = wallBoundsRef.current;
+          const margin = 0.2;
+          const constrainedX = Math.max(wallBounds.minX + margin, Math.min(wallBounds.maxX - margin, point.x));
+          const constrainedZ = Math.max(wallBounds.minZ + margin, Math.min(wallBounds.maxZ - margin, point.z));
+          
+          // Calculate Y position based on gravity (what's beneath)
+          const gravityY = getYPositionWithGravity(constrainedX, constrainedZ, selectedRef.current);
           
           selectedRef.current.position.x = constrainedX;
           selectedRef.current.position.z = constrainedZ;
+          selectedRef.current.position.y = gravityY;
           
           const idx = selectedRef.current.userData.id;
           if (labelsRef.current[idx]) {
             labelsRef.current[idx].position.x = constrainedX;
             labelsRef.current[idx].position.z = constrainedZ;
+            labelsRef.current[idx].position.y = gravityY + 2; // Above the object
           }
         }
         return;
@@ -907,22 +1000,37 @@ export default function RoomRedesigner() {
       const zoomSpeed = isFirstPerson ? 0.05 : 0.1;
       const delta = e.deltaY > 0 ? 1 : -1;
       
-      const direction = new THREE.Vector3();
-      camera.getWorldDirection(direction);
-      
-      camera.position.addScaledVector(direction, delta * zoomSpeed);
-      
       if (isFirstPerson) {
-        const maxRadius = 6;
-        const radius = Math.sqrt(camera.position.x**2 + camera.position.z**2);
+        const direction = new THREE.Vector3();
+        camera.getWorldDirection(direction);
+        camera.position.addScaledVector(direction, delta * zoomSpeed);
+        
+        const maxRadius = roomBounds.radius * 0.95;
+        const dx = camera.position.x - roomBounds.centerX;
+        const dz = camera.position.z - roomBounds.centerZ;
+        const radius = Math.sqrt(dx * dx + dz * dz);
         if (radius > maxRadius) {
            const ratio = maxRadius / radius;
-           camera.position.x *= ratio;
-           camera.position.z *= ratio;
+           camera.position.x = roomBounds.centerX + dx * ratio;
+           camera.position.z = roomBounds.centerZ + dz * ratio;
         }
         camera.position.y = 1.6;
       } else {
-        camera.position.y = Math.max(2, Math.min(20, camera.position.y));
+        // Orbit zoom: move camera closer/farther from target point
+        const toCamera = new THREE.Vector3();
+        toCamera.subVectors(camera.position, targetRef.current);
+        let distance = toCamera.length();
+        
+        // Increase/decrease distance based on zoom
+        const minDistance = roomBounds.radius * 0.8;
+        const maxDistance = roomBounds.radius * 4;
+        distance += delta * zoomSpeed * 2;
+        distance = Math.max(minDistance, Math.min(maxDistance, distance));
+        
+        // Set new camera position at same angle but different distance
+        toCamera.normalize();
+        toCamera.multiplyScalar(distance);
+        camera.position.copy(targetRef.current).add(toCamera);
       }
     };
 
@@ -951,9 +1059,10 @@ export default function RoomRedesigner() {
 
     // Helper function to check collision with walls
     const checkCollision = (position, collisionRadius = 0.4) => {
-      // Check room boundaries (-5 to 5 in world space, which is 0-10 in room space)
-      if (position.x < -5 + collisionRadius || position.x > 5 - collisionRadius ||
-          position.z < -5 + collisionRadius || position.z > 5 - collisionRadius) {
+      const wallBounds = wallBoundsRef.current;
+      // Check room boundaries using wall bounds
+      if (position.x < wallBounds.minX + collisionRadius || position.x > wallBounds.maxX - collisionRadius ||
+          position.z < wallBounds.minZ + collisionRadius || position.z > wallBounds.maxZ - collisionRadius) {
         return true;
       }
       
@@ -1019,12 +1128,14 @@ export default function RoomRedesigner() {
       camera.position.y = 1.6;
       
       // Keep camera within bounds as fallback
-      const maxDistance = 4.8;
-      const distance = Math.sqrt(camera.position.x ** 2 + camera.position.z ** 2);
+      const maxDistance = roomBounds.radius * 0.95;
+      const dx = camera.position.x - roomBounds.centerX;
+      const dz = camera.position.z - roomBounds.centerZ;
+      const distance = Math.sqrt(dx * dx + dz * dz);
       if (distance > maxDistance) {
         const ratio = maxDistance / distance;
-        camera.position.x *= ratio;
-        camera.position.z *= ratio;
+        camera.position.x = roomBounds.centerX + dx * ratio;
+        camera.position.z = roomBounds.centerZ + dz * ratio;
       }
     };
 
