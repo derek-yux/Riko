@@ -116,7 +116,7 @@ export default function RoomRedesigner() {
 
     clean = clean.replace(/,(\s*[\]}])/g, '$1');
     clean = clean.replace(/\/\*[\s\S]*?\*\//g, '');
-    clean = clean.replace(/^\s*\/\/.*$/gm, '');
+    clean = clean.replace(/(?<!:)\/\/.*$/gm, '');
     clean = clean.replace(/[\x00-\x1F\x7F]/g, ' ');
     return clean;
   };
@@ -336,7 +336,7 @@ export default function RoomRedesigner() {
 ${roomLength || roomWidth || roomHeight ? `
                 The room dimensions are: ${roomLength ? `length: ${roomLength}` : ''}${roomWidth ? `${roomLength ? ', ' : ''}width: ${roomWidth}` : ''}${roomHeight ? `${roomLength || roomWidth ? ', ' : ''}height: ${roomHeight}` : ''}. Use these real-world measurements to scale furniture and walls accurately.
 ` : ''}
-                Return ONLY a JSON array with no preamble or markdown. Each item must have:
+                Return ONLY a JSON array with no preamble, no markdown, and no comments (no // or /* */). Each item must have:
                 - name: descriptive name of the object (e.g., "north wall", "wooden chair", "ceiling lamp")
                 - x: horizontal position (0-10)
                 - z: depth position (0-10)
@@ -380,7 +380,8 @@ ${roomLength || roomWidth || roomHeight ? `
             temperature: 0.4,
             topK: 32,
             topP: 1,
-            maxOutputTokens: 16384
+            maxOutputTokens: 16384,
+            responseMimeType: "application/json"
           }
         })
       });
@@ -449,7 +450,8 @@ ${roomLength || roomWidth || roomHeight ? `
             temperature: 0.7,
             topK: 40,
             topP: 0.95,
-            maxOutputTokens: 8192
+            maxOutputTokens: 8192,
+            responseMimeType: "application/json"
           }
         })
       });
@@ -516,7 +518,8 @@ ${roomLength || roomWidth || roomHeight ? `
             temperature: 0.2,
             topK: 40,
             topP: 0.95,
-            maxOutputTokens: 8192
+            maxOutputTokens: 8192,
+            responseMimeType: "application/json"
           }
         })
       });
@@ -559,7 +562,7 @@ ${roomLength || roomWidth || roomHeight ? `
               Features: ${furnitureItem.features || ''}
 ${roomLength || roomWidth || roomHeight ? `              Room dimensions: ${roomLength ? `length: ${roomLength}` : ''}${roomWidth ? `${roomLength ? ', ' : ''}width: ${roomWidth}` : ''}${roomHeight ? `${roomLength || roomWidth ? ', ' : ''}height: ${roomHeight}` : ''}. Size the furniture proportionally to fit this room.
 ` : ''}
-              Return ONLY a single JSON object (not an array) with:
+              Return ONLY a single JSON object (not an array) with no comments (no // or /* */). Include:
               - name: "${furnitureItem.name}"
               - x: 5
               - z: 5
@@ -588,7 +591,8 @@ ${roomLength || roomWidth || roomHeight ? `              Room dimensions: ${room
             temperature: 0.4,
             topK: 32,
             topP: 1,
-            maxOutputTokens: 4096
+            maxOutputTokens: 4096,
+            responseMimeType: "application/json"
           }
         })
       });
