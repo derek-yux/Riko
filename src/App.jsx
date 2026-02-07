@@ -130,6 +130,13 @@ export default function RoomRedesigner() {
     return (yiq >= 128) ? '#000000' : '#FFFFFF';
   };
 
+  // Identify architectural features (non-selectable, semi-transparent)
+  const isArchitecturalFeature = (name) => {
+    const architecturalKeywords = ['wall', 'floor', 'door', 'window', 'ceiling', 'boundary', 'boundary', 'frame', 'trim', 'baseboard'];
+    const lowerName = name.toLowerCase();
+    return architecturalKeywords.some(keyword => lowerName.includes(keyword));
+  };
+
   const handleImageUpload = (e) => {
     const files = Array.from(e.target.files);
     const remainingSlots = 5 - images.length;
@@ -212,7 +219,7 @@ export default function RoomRedesigner() {
     }
   };
 
-  const createObjectFromComponents = (components, baseColor) => {
+  const createObjectFromComponents = (components, baseColor, isArchitectural = false) => {
     const group = new THREE.Group();
     
     components.forEach(comp => {
@@ -221,7 +228,9 @@ export default function RoomRedesigner() {
       const material = new THREE.MeshStandardMaterial({
         color,
         emissive: comp.emissive ? parseInt(sanitizeHex(comp.emissive), 16) : 0x000000,
-        emissiveIntensity: comp.emissiveIntensity || 0
+        emissiveIntensity: comp.emissiveIntensity || 0,
+        transparent: isArchitectural,
+        opacity: isArchitectural ? 0.3 : 1.0
       });
       const mesh = new THREE.Mesh(geometry, material);
       
@@ -662,6 +671,7 @@ ${roomLength || roomWidth || roomHeight ? `              Room dimensions: ${room
       
     const floor = new THREE.Mesh(floorGeometry, floorMaterial);
     floor.rotation.x = -Math.PI / 2;
+    floor.translateZ(-0.01);
     floor.receiveShadow = true;
     scene.add(floor);
 
@@ -680,14 +690,15 @@ ${roomLength || roomWidth || roomHeight ? `              Room dimensions: ${room
     
     items.forEach((item, idx) => {
       const baseColor = parseInt(sanitizeHex(item.color), 16);
-      const furniture = createObjectFromComponents(item.components || [], baseColor);
+      const isArchitectural = isArchitecturalFeature(item.name);
+      const furniture = createObjectFromComponents(item.components || [], baseColor, isArchitectural);
       furniture.position.set(item.x - 5, 0, item.z - 5);
-      furniture.userData = { name: item.name, id: idx, originalColor: baseColor, isFurniture: true };
+      furniture.userData = { name: item.name, id: idx, originalColor: baseColor, isFurniture: true, isArchitectural };
       
       const label = createLabel(item.name, baseColor);
       label.position.set(item.x - 5, 2, item.z - 5);
       label.visible = false; 
-      label.userData = { id: idx, isLabel: true };
+      label.userData = { id: idx, isLabel: true, isArchitectural };
       labelsRef.current.push(label);
       scene.add(label);
       
@@ -722,6 +733,30 @@ ${roomLength || roomWidth || roomHeight ? `              Room dimensions: ${room
           targetFurniture = objectsRef.current.find(obj => obj.userData.id === hitObj.userData.id);
         } else {
           targetFurniture = hitObj;
+        }
+
+        // Skip architectural features - keep raycasting to find selectable objects behind them
+        if (targetFurniture && targetFurniture.userData.isArchitectural) {
+          // Find the next non-architectural object
+          for (let i = 0; i < intersects.length; i++) {
+            let obj = intersects[i].object;
+            while (obj.parent && !obj.userData.name && !obj.userData.isLabel) {
+              obj = obj.parent;
+            }
+            let candidate = null;
+            if (obj.userData.isLabel) {
+              candidate = objectsRef.current.find(o => o.userData.id === obj.userData.id);
+            } else {
+              candidate = obj;
+            }
+            if (candidate && !candidate.userData.isArchitectural) {
+              targetFurniture = candidate;
+              break;
+            }
+          }
+          if (targetFurniture && targetFurniture.userData.isArchitectural) {
+            targetFurniture = null;
+          }
         }
 
         if (targetFurniture) {
@@ -778,13 +813,18 @@ ${roomLength || roomWidth || roomHeight ? `              Room dimensions: ${room
 
         if (intersects.length > 0) {
           const point = intersects[0].point;
-          selectedRef.current.position.x = point.x;
-          selectedRef.current.position.z = point.z;
+          
+          // Constrain position to room boundaries (-5 to 5)
+          const constrainedX = Math.max(-4.8, Math.min(4.8, point.x));
+          const constrainedZ = Math.max(-4.8, Math.min(4.8, point.z));
+          
+          selectedRef.current.position.x = constrainedX;
+          selectedRef.current.position.z = constrainedZ;
           
           const idx = selectedRef.current.userData.id;
           if (labelsRef.current[idx]) {
-            labelsRef.current[idx].position.x = point.x;
-            labelsRef.current[idx].position.z = point.z;
+            labelsRef.current[idx].position.x = constrainedX;
+            labelsRef.current[idx].position.z = constrainedZ;
           }
         }
         return;
@@ -804,10 +844,25 @@ ${roomLength || roomWidth || roomHeight ? `              Room dimensions: ${room
         while (obj.parent && !obj.userData.name) {
           obj = obj.parent;
         }
+        // Skip architectural features - show label for first non-architectural object
+        if (obj.userData.isArchitectural) {
+          for (let i = 0; i < intersects.length; i++) {
+            let candidate = intersects[i].object;
+            while (candidate.parent && !candidate.userData.name) {
+              candidate = candidate.parent;
+            }
+            if (!candidate.userData.isArchitectural) {
+              obj = candidate;
+              break;
+            }
+          }
+        }
         const idx = obj.userData.id;
-        if (labelsRef.current[idx]) {
+        if (labelsRef.current[idx] && !obj.userData.isArchitectural) {
           labelsRef.current[idx].visible = true;
           setHoveredItem(obj.userData.name);
+        } else {
+          setHoveredItem(null);
         }
       } else {
         setHoveredItem(null);
@@ -866,11 +921,38 @@ ${roomLength || roomWidth || roomHeight ? `              Room dimensions: ${room
       }
     };
 
+    // Helper function to check collision with walls
+    const checkCollision = (position, collisionRadius = 0.4) => {
+      // Check room boundaries (-5 to 5 in world space, which is 0-10 in room space)
+      if (position.x < -5 + collisionRadius || position.x > 5 - collisionRadius ||
+          position.z < -5 + collisionRadius || position.z > 5 - collisionRadius) {
+        return true;
+      }
+      
+      // Check collision with architectural features (walls)
+      for (let obj of objectsRef.current) {
+        if (obj.userData.isArchitectural) {
+          // Get bounding box of the architectural feature
+          const box = new THREE.Box3().setFromObject(obj);
+          const wallCollisionRadius = collisionRadius + 0.2; // Extra margin for walls
+          
+          // Check if position is within the bounding box (with collision radius)
+          if (position.x > box.min.x - wallCollisionRadius && position.x < box.max.x + wallCollisionRadius &&
+              position.y > box.min.y - 0.1 && position.y < box.max.y &&
+              position.z > box.min.z - wallCollisionRadius && position.z < box.max.z + wallCollisionRadius) {
+            return true;
+          }
+        }
+      }
+      
+      return false;
+    };
+
     // Movement update function
     const updateMovement = () => {
       if (!isFirstPerson || !cameraRef.current) return;
 
-      const moveSpeed = 0.1;
+      const moveSpeed = 0.025; // Reduced from 0.1 for realistic walking speed
       const camera = cameraRef.current;
       
       // Get camera direction
@@ -883,25 +965,33 @@ ${roomLength || roomWidth || roomHeight ? `              Room dimensions: ${room
       const right = new THREE.Vector3();
       right.crossVectors(direction, new THREE.Vector3(0, 1, 0)).normalize();
       
+      // Calculate desired new position
+      const desiredPos = camera.position.clone();
+      
       // Apply movement based on pressed keys
       if (keysPressed.current.w) {
-        camera.position.addScaledVector(direction, moveSpeed);
+        desiredPos.addScaledVector(direction, moveSpeed);
       }
       if (keysPressed.current.s) {
-        camera.position.addScaledVector(direction, -moveSpeed);
+        desiredPos.addScaledVector(direction, -moveSpeed);
       }
       if (keysPressed.current.a) {
-        camera.position.addScaledVector(right, -moveSpeed);
+        desiredPos.addScaledVector(right, -moveSpeed);
       }
       if (keysPressed.current.d) {
-        camera.position.addScaledVector(right, moveSpeed);
+        desiredPos.addScaledVector(right, moveSpeed);
+      }
+      
+      // Check if new position is valid (no collision)
+      if (!checkCollision(desiredPos)) {
+        camera.position.copy(desiredPos);
       }
       
       // Maintain eye level
       camera.position.y = 1.6;
       
-      // Optional: Keep camera within bounds
-      const maxDistance = 8;
+      // Keep camera within bounds as fallback
+      const maxDistance = 4.8;
       const distance = Math.sqrt(camera.position.x ** 2 + camera.position.z ** 2);
       if (distance > maxDistance) {
         const ratio = maxDistance / distance;
