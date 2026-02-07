@@ -42,7 +42,10 @@ export default function RoomRedesigner() {
   const [isDarkMode, setIsDarkMode] = useState(true); // Changed to true for default dark mode
   const [isFirstPerson, setIsFirstPerson] = useState(false);
   const [showWASDPopup, setShowWASDPopup] = useState(false);
-  
+  const [roomLength, setRoomLength] = useState('');
+  const [roomWidth, setRoomWidth] = useState('');
+  const [roomHeight, setRoomHeight] = useState('');
+
   const canvasRef = useRef(null);
   const sceneRef = useRef(null);
   const cameraRef = useRef(null);
@@ -93,6 +96,29 @@ export default function RoomRedesigner() {
     }
     if (/^[0-9a-f]{6}$/i.test(clean)) return clean;
     return 'AAAAAA';
+  };
+
+  const cleanGeminiJSON = (text, type = 'array') => {
+    let clean = text.trim();
+    clean = clean.replace(/```json\s*/g, '').replace(/```\s*/g, '');
+
+    if (type === 'array') {
+      const start = clean.indexOf('[');
+      const end = clean.lastIndexOf(']');
+      if (start === -1 || end === -1) throw new Error('No JSON array found in response');
+      clean = clean.substring(start, end + 1);
+    } else {
+      const start = clean.indexOf('{');
+      const end = clean.lastIndexOf('}');
+      if (start === -1 || end === -1) throw new Error('No JSON object found in response');
+      clean = clean.substring(start, end + 1);
+    }
+
+    clean = clean.replace(/,(\s*[\]}])/g, '$1');
+    clean = clean.replace(/\/\*[\s\S]*?\*\//g, '');
+    clean = clean.replace(/^\s*\/\/.*$/gm, '');
+    clean = clean.replace(/[\x00-\x1F\x7F]/g, ' ');
+    return clean;
   };
 
   const getContrastColor = (hex) => {
@@ -298,7 +324,9 @@ export default function RoomRedesigner() {
                 3. Decorative items: lamps, plants, artwork, decorations
 
                 For each object, provide detailed 3D representation data.
-
+${roomLength || roomWidth || roomHeight ? `
+                The room dimensions are: ${roomLength ? `length: ${roomLength}` : ''}${roomWidth ? `${roomLength ? ', ' : ''}width: ${roomWidth}` : ''}${roomHeight ? `${roomLength || roomWidth ? ', ' : ''}height: ${roomHeight}` : ''}. Use these real-world measurements to scale furniture and walls accurately.
+` : ''}
                 Return ONLY a JSON array with no preamble or markdown. Each item must have:
                 - name: descriptive name of the object (e.g., "north wall", "wooden chair", "ceiling lamp")
                 - x: horizontal position (0-10)
@@ -359,32 +387,7 @@ export default function RoomRedesigner() {
       }
       
       const text = data.candidates[0].content.parts[0].text;
-
-      // More aggressive cleaning
-      let cleanText = text.trim();
-
-      // Remove markdown code blocks
-      cleanText = cleanText.replace(/```json\s*/g, '').replace(/```\s*/g, '');
-
-      // Find JSON array boundaries
-      const start = cleanText.indexOf('[');
-      const end = cleanText.lastIndexOf(']');
-
-      if (start === -1 || end === -1) {
-        throw new Error("No JSON array found in response");
-      }
-
-      cleanText = cleanText.substring(start, end + 1);
-
-      // Remove trailing commas
-      cleanText = cleanText.replace(/,(\s*[\]}])/g, '$1');
-
-      // Remove comments (single and multi-line)
-      cleanText = cleanText.replace(/\/\*[\s\S]*?\*\//g, '');
-      cleanText = cleanText.replace(/\/\/.*/g, '');
-
-      // Log for debugging
-      console.log("Cleaned JSON:", cleanText);
+      const cleanText = cleanGeminiJSON(text);
 
       try {
         const detectedItems = JSON.parse(cleanText);
@@ -448,19 +451,8 @@ export default function RoomRedesigner() {
         throw new Error(data.error.message || 'API Error');
       }
       
-      const text = data.candidates[0].content.parts[0].text.trim();
-      console.log('Raw layout response:', text);
-
-      let cleanText = text
-        .replace(/```json\s*/g, '')
-        .replace(/```\s*/g, '')
-        .trim();
-
-      const jsonMatch = cleanText.match(/\[[\s\S]*\]/);
-      if (jsonMatch) {
-        cleanText = jsonMatch[0];
-      }
-
+      const text = data.candidates[0].content.parts[0].text;
+      const cleanText = cleanGeminiJSON(text);
       const newLayout = JSON.parse(cleanText);
       
       setItems(newLayout);
@@ -532,18 +524,7 @@ export default function RoomRedesigner() {
         .join('\n')
         .trim();
 
-      console.log('Raw furniture response:', text);
-
-      let cleanText = text
-        .replace(/```json\s*/g, '')
-        .replace(/```\s*/g, '')
-        .trim();
-
-      const jsonMatch = cleanText.match(/\[[\s\S]*\]/);
-      if (jsonMatch) {
-        cleanText = jsonMatch[0];
-      }
-
+      const cleanText = cleanGeminiJSON(text);
       const recommendations = JSON.parse(cleanText);
 
       setFurnitureResults(recommendations);
@@ -567,7 +548,8 @@ export default function RoomRedesigner() {
               text: `Generate a detailed 3D representation of this furniture item:
               Name: ${furnitureItem.name}
               Features: ${furnitureItem.features || ''}
-
+${roomLength || roomWidth || roomHeight ? `              Room dimensions: ${roomLength ? `length: ${roomLength}` : ''}${roomWidth ? `${roomLength ? ', ' : ''}width: ${roomWidth}` : ''}${roomHeight ? `${roomLength || roomWidth ? ', ' : ''}height: ${roomHeight}` : ''}. Size the furniture proportionally to fit this room.
+` : ''}
               Return ONLY a single JSON object (not an array) with:
               - name: "${furnitureItem.name}"
               - x: 5
@@ -608,18 +590,8 @@ export default function RoomRedesigner() {
         throw new Error(data.error.message || 'API Error');
       }
 
-      const text = data.candidates[0].content.parts[0].text.trim();
-
-      const start = text.indexOf('{');
-      const end = text.lastIndexOf('}');
-
-      if (start === -1 || end === -1) {
-        throw new Error('No JSON object found in response');
-      }
-
-      let cleanText = text.substring(start, end + 1);
-      cleanText = cleanText.replace(/,\s*([\]}])/g, '$1');
-
+      const text = data.candidates[0].content.parts[0].text;
+      const cleanText = cleanGeminiJSON(text, 'object');
       const newFurniture = JSON.parse(cleanText);
       newFurniture.x = 5;
       newFurniture.z = 5;
@@ -967,7 +939,7 @@ export default function RoomRedesigner() {
     };
   }, [view, items, isDarkMode, isFirstPerson]);
 
-  const resetView = () => { setView('upload'); setImages([]); setItems([]); };
+  const resetView = () => { setView('upload'); setImages([]); setItems([]); setRoomLength(''); setRoomWidth(''); setRoomHeight(''); };
 
   // Unified UI - Both modes now use the same structure
   const bgClass = isDarkMode 
@@ -1125,6 +1097,59 @@ export default function RoomRedesigner() {
                     <input type="file" accept="image/*" multiple onChange={handleImageUpload} className="hidden" />
                   </div>
                 </label>
+
+                <div className={isDarkMode ? "bg-slate-950/50 p-4 rounded-xl border border-white/5" : "bg-gray-50 p-4 rounded-lg border border-gray-200"}>
+                  <label className={isDarkMode
+                    ? "block text-sm font-medium text-slate-400 mb-1"
+                    : "block text-sm font-medium text-gray-700 mb-1"
+                  }>
+                    Room Dimensions <span className={isDarkMode ? "text-slate-600" : "text-gray-400"}>(optional)</span>
+                  </label>
+                  <p className={isDarkMode ? "text-xs text-slate-500 mb-3" : "text-xs text-gray-500 mb-3"}>
+                    Enter measurements for best results
+                  </p>
+                  <div className="grid grid-cols-3 gap-3">
+                    <div>
+                      <label className={isDarkMode ? "block text-xs text-slate-500 mb-1" : "block text-xs text-gray-500 mb-1"}>Length</label>
+                      <input
+                        type="text"
+                        value={roomLength}
+                        onChange={(e) => setRoomLength(e.target.value)}
+                        placeholder="e.g., 12 ft"
+                        className={isDarkMode
+                          ? "w-full px-3 py-2 bg-slate-900 border border-slate-700 rounded-lg text-sm text-white placeholder-slate-600 outline-none focus:ring-2 focus:ring-purple-500"
+                          : "w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                        }
+                      />
+                    </div>
+                    <div>
+                      <label className={isDarkMode ? "block text-xs text-slate-500 mb-1" : "block text-xs text-gray-500 mb-1"}>Width</label>
+                      <input
+                        type="text"
+                        value={roomWidth}
+                        onChange={(e) => setRoomWidth(e.target.value)}
+                        placeholder="e.g., 10 ft"
+                        className={isDarkMode
+                          ? "w-full px-3 py-2 bg-slate-900 border border-slate-700 rounded-lg text-sm text-white placeholder-slate-600 outline-none focus:ring-2 focus:ring-purple-500"
+                          : "w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                        }
+                      />
+                    </div>
+                    <div>
+                      <label className={isDarkMode ? "block text-xs text-slate-500 mb-1" : "block text-xs text-gray-500 mb-1"}>Height</label>
+                      <input
+                        type="text"
+                        value={roomHeight}
+                        onChange={(e) => setRoomHeight(e.target.value)}
+                        placeholder="e.g., 9 ft"
+                        className={isDarkMode
+                          ? "w-full px-3 py-2 bg-slate-900 border border-slate-700 rounded-lg text-sm text-white placeholder-slate-600 outline-none focus:ring-2 focus:ring-purple-500"
+                          : "w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                        }
+                      />
+                    </div>
+                  </div>
+                </div>
 
                 {images.length > 0 && (
                   <div className="space-y-4">
