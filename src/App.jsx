@@ -552,6 +552,27 @@ ${roomLength || roomWidth || roomHeight ? `
   const addFurnitureToRoom = async (furnitureItem, idx) => {
     setAddingToRoom(idx);
     try {
+      const itemSummary = (() => {
+        if (items.length === 0) return '';
+        const summaries = items.slice(0, 5).map(item => {
+          if (!item.components || item.components.length === 0) return null;
+          let maxW = 0, maxH = 0, maxD = 0;
+          item.components.forEach(comp => {
+            const p = comp.geometry?.params || {};
+            const pos = comp.position || {};
+            const w = (p.width || (p.radius || p.radiusBottom || 0) * 2 || 0);
+            const h = (p.height || (p.radius || 0) * 2 || 0);
+            const d = (p.depth || (p.radius || p.radiusBottom || 0) * 2 || 0);
+            maxW = Math.max(maxW, w + Math.abs(pos.x || 0) * 2);
+            maxH = Math.max(maxH, h + (pos.y || 0));
+            maxD = Math.max(maxD, d + Math.abs(pos.z || 0) * 2);
+          });
+          return `${item.name}: ~${maxW.toFixed(1)}m wide, ${maxH.toFixed(1)}m tall, ${maxD.toFixed(1)}m deep`;
+        }).filter(Boolean);
+        if (summaries.length === 0) return '';
+        return `\n              Existing furniture in the scene for scale reference:\n              ${summaries.join('\n              ')}\n              Your generated furniture MUST match these proportions.`;
+      })();
+
       const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-3-pro-preview:generateContent?key=${apiKey}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -561,8 +582,10 @@ ${roomLength || roomWidth || roomHeight ? `
               text: `Generate a detailed 3D representation of this furniture item:
               Name: ${furnitureItem.name}
               Features: ${furnitureItem.features || ''}
-${roomLength || roomWidth || roomHeight ? `              Room dimensions: ${roomLength ? `length: ${roomLength}` : ''}${roomWidth ? `${roomLength ? ', ' : ''}width: ${roomWidth}` : ''}${roomHeight ? `${roomLength || roomWidth ? ', ' : ''}height: ${roomHeight}` : ''}. Size the furniture proportionally to fit this room.
-` : ''}
+
+              SCENE CONTEXT: The room is rendered on a 10x10 unit grid where 1 unit = 1 meter. The floor is 20x20 units total.
+${roomLength || roomWidth || roomHeight ? `              Room dimensions: ${roomLength ? `length: ${roomLength}` : ''}${roomWidth ? `${roomLength ? ', ' : ''}width: ${roomWidth}` : ''}${roomHeight ? `${roomLength || roomWidth ? ', ' : ''}height: ${roomHeight}` : ''}. Size the furniture proportionally to fit this room.` : ''}${itemSummary}
+
               Return ONLY a single JSON object (not an array) with no comments (no // or /* */). Include:
               - name: "${furnitureItem.name}"
               - x: 5
@@ -573,18 +596,21 @@ ${roomLength || roomWidth || roomHeight ? `              Room dimensions: ${room
                 - position: { x, y, z } relative to object center (y=0 is the floor)
                 - rotation: { x, y, z } in radians (optional)
                 - color: hex color WITHOUT # prefix (optional, overrides base color)
-                - emissive: hex color WITHOUT # prefix for glowing parts (optional)
-                - emissiveIntensity: 0-1 (optional)
 
-              Use realistic proportions and multiple components to capture the shape. For example a chair should have a seat, backrest, and 4 legs as separate components. Use real-world dimensions in meters.
+              IMPORTANT: The 3D scene uses 1 unit = 1 meter. Furniture must be full real-world size:
+              - A dining chair: seat ~0.45m high, ~0.5m wide, backrest ~0.9m total height
+              - A sofa: ~0.85m high, ~2.0m wide, ~0.9m deep
+              - A bookshelf: ~1.8m tall, ~0.8m wide, ~0.3m deep
+              - A desk: ~0.75m high, ~1.4m wide, ~0.7m deep
+              Use multiple components with THICK, VISIBLE parts (legs at least radius 0.05, surfaces at least 0.05 thick).
 
-              Example for a simple coffee table:
+              Example for a simple coffee table (1.2m x 0.6m, 0.45m tall):
               {"name":"coffee table","x":5,"z":5,"color":"8B4513","components":[
-                {"geometry":{"type":"box","params":{"width":1.2,"height":0.05,"depth":0.6}},"position":{"x":0,"y":0.45,"z":0}},
-                {"geometry":{"type":"cylinder","params":{"radiusTop":0.04,"radiusBottom":0.04,"height":0.45}},"position":{"x":-0.5,"y":0.225,"z":-0.25}},
-                {"geometry":{"type":"cylinder","params":{"radiusTop":0.04,"radiusBottom":0.04,"height":0.45}},"position":{"x":0.5,"y":0.225,"z":-0.25}},
-                {"geometry":{"type":"cylinder","params":{"radiusTop":0.04,"radiusBottom":0.04,"height":0.45}},"position":{"x":-0.5,"y":0.225,"z":0.25}},
-                {"geometry":{"type":"cylinder","params":{"radiusTop":0.04,"radiusBottom":0.04,"height":0.45}},"position":{"x":0.5,"y":0.225,"z":0.25}}
+                {"geometry":{"type":"box","params":{"width":1.2,"height":0.06,"depth":0.6}},"position":{"x":0,"y":0.45,"z":0}},
+                {"geometry":{"type":"cylinder","params":{"radiusTop":0.05,"radiusBottom":0.05,"height":0.45}},"position":{"x":-0.5,"y":0.225,"z":-0.25}},
+                {"geometry":{"type":"cylinder","params":{"radiusTop":0.05,"radiusBottom":0.05,"height":0.45}},"position":{"x":0.5,"y":0.225,"z":-0.25}},
+                {"geometry":{"type":"cylinder","params":{"radiusTop":0.05,"radiusBottom":0.05,"height":0.45}},"position":{"x":-0.5,"y":0.225,"z":0.25}},
+                {"geometry":{"type":"cylinder","params":{"radiusTop":0.05,"radiusBottom":0.05,"height":0.45}},"position":{"x":0.5,"y":0.225,"z":0.25}}
               ]}`
             }]
           }],
@@ -605,7 +631,9 @@ ${roomLength || roomWidth || roomHeight ? `              Room dimensions: ${room
       }
 
       const text = data.candidates[0].content.parts[0].text;
+      console.log("Raw addFurniture response:", text);
       const cleanText = cleanGeminiJSON(text, 'object');
+      console.log("Cleaned addFurniture JSON:", cleanText);
       const newFurniture = JSON.parse(cleanText);
       newFurniture.x = 5;
       newFurniture.z = 5;
